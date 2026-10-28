@@ -1,0 +1,19 @@
+.build/
+.cache/
+dist/
+Vendor/installed/
+.DS_Store
+
+# Local libmtp build output
+Vendor/libmtp-1.1.22/**/.deps/
+Vendor/libmtp-1.1.22/**/.libs/
+Vendor/libmtp-1.1.22/**/*.o
+Vendor/libmtp-1.1.22/**/*.lo
+Vendor/libmtp-1.1.22/**/*.la
+Vendor/libmtp-1.1.22/**/Makefile
+Vendor/libmtp-1.1.22/config.log
+Vendor/libmtp-1.1.22/config.status
+Vendor/libmtp-1.1.22/config.h
+Vendor/libmtp-1.1.22/libtool
+Vendor/libmtp-1.1.22/libmtp.pc
+Vendor/libmtp-1.1.22/stamp-h1
