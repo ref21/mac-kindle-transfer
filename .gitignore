@@ -17,3 +17,6 @@ Vendor/libmtp-1.1.22/config.h
 Vendor/libmtp-1.1.22/libtool
 Vendor/libmtp-1.1.22/libmtp.pc
 Vendor/libmtp-1.1.22/stamp-h1
+Vendor/libmtp-1.1.22/examples/mtp-*
+Vendor/libmtp-1.1.22/util/mtp-hotplug
+Vendor/libmtp-1.1.22/util/mtp-probe
