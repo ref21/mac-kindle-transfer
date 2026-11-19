@@ -158,7 +158,7 @@ final class MTPTransport: Transport {
     }
     /// The only place in the app that moves an object on the Kindle.
     func move(id: UInt32, storage: UInt32, parent: UInt32) throws {
-        guard id != 0, id != UInt32.max else { throw DriveError(message: "That item cannot be moved.") }
+        guard id != 0, id != UInt32.max, parent != UInt32.max, parent != id else { throw DriveError(message: "That item cannot be moved.") }
         let d = try device(); LIBMTP_Clear_Errorstack(d)
         // Unlike kd_upload, MoveObject takes the storage root as 0 (libmtp.c): pass `parent` unchanged.
         guard LIBMTP_Move_Object(d, id, storage, parent) == 0 else { throw lastFailure() }

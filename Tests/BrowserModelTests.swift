@@ -341,7 +341,71 @@ final class BrowserModelTests: XCTestCase {
         XCTAssertNil(model.error)
         XCTAssertEqual(model.status, "Moving 3 item(s) to /documents/Sherlock Holmes — cancelled")
         XCTAssertTrue(model.history.contains { $0.contains("Items already moved stay moved.") })
-        XCTAssertEqual(fake.moveCalls.count, 1)
+        XCTAssertEqual(fake.moveCalls.count, 2)          // the first book and its .sdr folder, which are not separated
+        XCTAssertTrue(model.history.contains { $0.contains("1 of 3 selected item(s) moved.") }, model.history.joined(separator: "\n"))
+    }
+
+    @MainActor func testDraggingAKindleSystemFolderShowsWhyNothingMoved() async throws {
+        let fake = FakeTransport.sample()
+        let model = await connected(fake)
+        let documents = try XCTUnwrap(model.files.first { $0.name == "documents" })
+        let fonts = try XCTUnwrap(model.files.first { $0.name == "fonts" })
+        model.move([documents.id], to: model.folderRef(child: fonts)); await model.finished()
+        let error = try XCTUnwrap(model.error)
+        XCTAssertTrue(error.hasPrefix("Nothing was moved."), error)
+        XCTAssertTrue(error.contains("a Kindle system folder; it stays at the top level"), error)
+        XCTAssertEqual(fake.moveCalls, [])
+    }
+
+    @MainActor func testMoveWhileBusyDoesNothing() async throws {
+        let fake = FakeTransport.sample()
+        let model = await connected(fake)
+        await open("documents", model)
+        let book = try XCTUnwrap(model.files.first { $0.name == "Walden.pdf" })
+        model.refresh()
+        XCTAssertTrue(model.busy)
+        model.move([book.id], to: model.folderRef(depth: 0)); await model.finished()
+        XCTAssertEqual(fake.moveCalls, [])
+    }
+
+    @MainActor func testTransportFailureDuringAMoveDisconnects() async throws {
+        let fake = FakeTransport.sample()
+        let model = await connected(fake)
+        await open("documents", model)
+        let book = try XCTUnwrap(model.files.first { $0.name == "Walden.pdf" })
+        let series = try XCTUnwrap(model.files.first { $0.name == "Sherlock Holmes" })
+        fake.alive = false
+        model.move([book.id], to: model.folderRef(child: series)); await model.finished()
+        XCTAssertNil(model.connection)
+        XCTAssertEqual(model.status, BrowserModel.disconnectedStatus)
+        XCTAssertFalse(model.busy)
+    }
+
+    @MainActor func testAFolderMovedToTheRootBecomesASidebarShortcut() async throws {
+        let fake = FakeTransport.sample()
+        let documents = try XCTUnwrap(fake.node(named: "documents")).id
+        fake.addFolder("books", parent: documents)
+        let model = await connected(fake)
+        await open("documents", model)
+        XCTAssertFalse(model.rootFolders.contains { $0.name == "books" })
+        let books = try XCTUnwrap(model.files.first { $0.name == "books" })
+        model.move([books.id], to: model.folderRef(depth: 0)); await model.finished()
+        XCTAssertNil(model.error)
+        XCTAssertTrue(model.rootFolders.contains { $0.name == "books" })
+    }
+
+    @MainActor func testAMoveErrorMidBatchSaysTheRestWasNotMoved() async throws {
+        let fake = FakeTransport.sample()
+        let model = await connected(fake)
+        await open("documents", model)
+        let series = try XCTUnwrap(model.files.first { $0.name == "Sherlock Holmes" })
+        let timeMachine = try XCTUnwrap(model.files.first { $0.name == "The Time Machine.epub" })
+        let walden = try XCTUnwrap(model.files.first { $0.name == "Walden.pdf" })
+        fake.moveFails = [timeMachine.id]
+        model.move([timeMachine.id, walden.id], to: model.folderRef(child: series)); await model.finished()
+        let error = try XCTUnwrap(model.error)
+        XCTAssertTrue(error.contains("The Kindle refused to move the item."), error)
+        XCTAssertTrue(error.hasSuffix("The remaining items were not moved."), error)
     }
 
     @MainActor func testIdsOutsideTheOpenFolderAreIgnored() async throws {

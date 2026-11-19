@@ -38,6 +38,8 @@ final class FakeTransport: Transport {
     var supportsMove = true                              // the device advertises MoveObject
     var moveFails = Set<UInt32>()                        // move reports an error, object stays
     var moveSilentlyKeeps = Set<UInt32>()                // move reports success, object stays
+    var rehandleOnMove = Set<UInt32>()                   // move gives the object (and its children) new ids
+    var moveGoesTo: [UInt32: UInt32] = [:]               // move reports success but puts the object in this other folder
     var delay: TimeInterval = 0                          // per call
     var deleteHook: ((UInt32) -> Void)?                  // called before each delete
     var moveHook: ((UInt32) -> Void)?                    // called before each move
@@ -218,6 +220,15 @@ final class FakeTransport: Transport {
         }
         guard !taken(node.name, in: parent) else { throw fail("An item with that name already exists.") }
         if moveSilentlyKeeps.contains(id) { return }
+        if let elsewhere = moveGoesTo[id] { nodes[id]?.parent = elsewhere; return }
+        if rehandleOnMove.contains(id) {
+            let fresh = newID(), position = order.firstIndex(of: id)
+            nodes[id] = nil; order.removeAll { $0 == id }
+            nodes[fresh] = Node(id: fresh, name: node.name, parent: parent, folder: node.folder, data: node.data, modified: node.modified)
+            order.insert(fresh, at: min(position ?? order.count, order.count))
+            for child in children(of: id) { nodes[child.id]?.parent = fresh }
+            return
+        }
         nodes[id]?.parent = parent
     }
 }

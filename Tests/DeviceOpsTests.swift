@@ -518,7 +518,6 @@ final class MoveTests: DeviceOpsTestCase {
     func testTwoItemsWithTheSameNameCannotBothMove() {
         let dest = t.addFolder("Dest"), sub = t.addFolder("Sub")
         let a = t.addFile("Same.txt"), b = t.addFile("same.txt", parent: sub)
-        _ = b
         let outcome = move([a], to: dest)
         XCTAssertEqual(outcome.moved.map(\.id), [a])
         let again = move([b], from: sub, to: dest)
@@ -593,5 +592,136 @@ final class MoveTests: DeviceOpsTestCase {
         XCTAssertEqual(outcome.moved, [])
         XCTAssertEqual(message(outcome.failure).hasPrefix("A folder cannot be moved into itself."), true, message(outcome.failure))
         XCTAssertEqual(t.nodes[outer]?.parent, 0)
+    }
+
+    // MARK: Rehandled and misplaced objects
+
+    func testAMovedObjectWithANewHandleIsConfirmedByName() throws {
+        let dest = t.addFolder("Dest"), sub = t.addFolder("Sub")
+        let inner = t.addFile("Inner.txt", parent: sub)
+        t.rehandleOnMove = [sub]
+        let outcome = move([sub], to: dest)
+        XCTAssertNil(outcome.failure)
+        XCTAssertEqual(outcome.moved.map(\.id), [sub])
+        XCTAssertNil(t.nodes[sub])
+        let fresh = try XCTUnwrap(t.node(named: "Sub", in: dest))
+        XCTAssertNotEqual(fresh.id, sub)
+        XCTAssertEqual(t.nodes[inner]?.parent, fresh.id)
+    }
+    func testAnObjectThatLeftTheSourceButIsNotInTheDestinationIsNotConfirmed() {
+        let dest = t.addFolder("Dest"), other = t.addFolder("Other")
+        let a = t.addFile("A.epub")
+        t.moveGoesTo = [a: other]
+        let outcome = move([a], to: dest)
+        XCTAssertEqual(outcome.moved, [])
+        XCTAssertTrue(message(outcome.failure).contains("did not confirm that ‘A.epub’ was moved"), message(outcome.failure))
+    }
+    func testAnEntryThatIsNoLongerInTheFolderIsSkipped() {
+        let dest = t.addFolder("Dest"), sub = t.addFolder("Sub")
+        let a = t.addFile("A.epub", parent: sub), b = t.addFile("B.epub")
+        let outcome = move([a, b], to: dest)           // `a` is not in the root
+        XCTAssertEqual(outcome.moved.map(\.id), [b])
+        XCTAssertEqual(outcome.skipped, ["A.epub — no longer in this folder"])
+        XCTAssertEqual(t.moveCalls, [b])
+    }
+    func testNothingIsListedAgainWhenNothingWasMoved() {
+        let dest = t.addFolder("Dest")
+        let clash = t.addFile("A.epub", parent: dest), a = t.addFile("A.epub")
+        _ = clash
+        let before = t.listCalls.count + t.childIDCalls.count
+        let outcome = move([a], to: dest)
+        XCTAssertEqual(outcome.moved, [])
+        XCTAssertEqual(t.listCalls.count + t.childIDCalls.count - before, 2)   // destination and source only
+    }
+
+    // MARK: Kindle system folders
+
+    func testATopLevelKindleFolderIsNotMoved() {
+        let documents = t.addFolder("documents"), fonts = t.addFolder("fonts")
+        let outcome = move([documents], to: fonts)
+        XCTAssertNil(outcome.failure)
+        XCTAssertEqual(outcome.moved, [])
+        XCTAssertEqual(outcome.skipped, ["documents — a Kindle system folder; it stays at the top level"])
+        XCTAssertEqual(t.moveCalls, [])
+        XCTAssertEqual(t.nodes[documents]?.parent, 0)
+    }
+    func testTheProtectionIgnoresCaseAndOnlyAppliesToRootFolders() {
+        let fonts = t.addFolder("fonts"), upper = t.addFolder("Audible"), plain = t.addFolder("My Stuff")
+        let file = t.addFile("documents")                        // a file with a protected name
+        let outcome = move([upper, plain, file], to: fonts)
+        XCTAssertEqual(outcome.skipped.count, 1)
+        XCTAssertEqual(outcome.moved.map(\.id), [plain, file])
+    }
+    func testAFolderNamedDocumentsInsideASubfolderMoves() {
+        let sub = t.addFolder("Sub"), dest = t.addFolder("Dest")
+        let documents = t.addFolder("documents", parent: sub)
+        let outcome = move([documents], from: sub, to: dest)
+        XCTAssertNil(outcome.failure)
+        XCTAssertEqual(outcome.moved.map(\.id), [documents])
+        XCTAssertEqual(outcome.skipped, [])
+    }
+
+    // MARK: A book's .sdr folder
+
+    func testSidecarName() {
+        XCTAssertEqual(Device.sidecarName(for: "Book.azw3"), "Book.sdr")
+        XCTAssertNil(Device.sidecarName(for: "Book"))
+        XCTAssertEqual(Device.sidecarName(for: "a.b.pdf"), "a.b.sdr")
+    }
+    private func sample() -> (documents: UInt32, book: UInt32, sdr: UInt32, series: UInt32) {
+        t = FakeTransport.sample()
+        let documents = t.node(named: "documents")!.id
+        return (documents, t.node(named: "Pride and Prejudice.azw3", in: documents)!.id,
+                t.node(named: "Pride and Prejudice.sdr", in: documents)!.id, t.node(named: "Sherlock Holmes", in: documents)!.id)
+    }
+    func testMovingABookMovesItsSdrFolderToo() {
+        let s = sample()
+        let outcome = move([s.book], from: s.documents, to: s.series)
+        XCTAssertNil(outcome.failure)
+        XCTAssertEqual(outcome.moved.map(\.id), [s.book, s.sdr])
+        XCTAssertEqual(t.moveCalls, [s.book, s.sdr])
+        XCTAssertEqual(t.nodes[s.sdr]?.parent, s.series)
+        XCTAssertNotNil(t.node(named: "Pride and Prejudice.azw3f", in: s.sdr))
+    }
+    func testSelectingBookAndSdrMovesEachOnce() {
+        let s = sample()
+        for order in [[s.book, s.sdr], [s.sdr, s.book]] {
+            t = FakeTransport.sample()
+            let out = move(order, from: s.documents, to: s.series)
+            XCTAssertNil(out.failure)
+            XCTAssertEqual(out.skipped, [])
+            XCTAssertEqual(Set(out.moved.map(\.id)), [s.book, s.sdr])
+            XCTAssertEqual(t.moveCalls.count, 2)
+        }
+    }
+    func testAnSdrNameTakenInTheDestinationLeavesItInPlace() {
+        let s = sample()
+        t.addFolder("pride and prejudice.sdr", parent: s.series)
+        let outcome = move([s.book], from: s.documents, to: s.series)
+        XCTAssertNil(outcome.failure)
+        XCTAssertEqual(outcome.moved.map(\.id), [s.book])
+        XCTAssertEqual(outcome.skipped, ["Pride and Prejudice.sdr — reading data for ‘Pride and Prejudice.azw3’ left in place: the destination already has a folder with this name"])
+        XCTAssertEqual(t.nodes[s.sdr]?.parent, s.documents)
+    }
+    func testABookWithoutAnSdrMovesAlone() {
+        let s = sample()
+        let walden = t.node(named: "Walden.pdf", in: s.documents)!.id
+        let outcome = move([walden], from: s.documents, to: s.series)
+        XCTAssertEqual(outcome.moved.map(\.id), [walden])
+        XCTAssertEqual(t.moveCalls, [walden])
+    }
+    func testMovingTheSdrAloneLeavesTheBook() {
+        let s = sample()
+        let outcome = move([s.sdr], from: s.documents, to: s.series)
+        XCTAssertEqual(outcome.moved.map(\.id), [s.sdr])
+        XCTAssertEqual(t.nodes[s.book]?.parent, s.documents)
+    }
+    func testTwoBooksSharingAnSdrMoveItOnce() {
+        let s = sample()
+        let pdf = t.addFile("Pride and Prejudice.pdf", parent: s.documents)
+        let outcome = move([s.book, pdf], from: s.documents, to: s.series)
+        XCTAssertNil(outcome.failure)
+        XCTAssertEqual(outcome.moved.map(\.id), [s.book, s.sdr, pdf])
+        XCTAssertEqual(outcome.skipped, [])
     }
 }

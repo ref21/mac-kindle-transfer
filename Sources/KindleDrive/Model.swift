@@ -332,11 +332,24 @@ final class OperationContext {
             for item in outcome.skipped { self.record("Skipped: \(item)") }
             if !outcome.skipped.isEmpty { context.doneNote = "\(outcome.skipped.count) skipped" }
             if let failure = outcome.failure {
-                await self.afterFailure(failure)
-                throw failure
+                // Companions (.sdr folders) are not selected items: count only the selected ones.
+                let selected = Set(entries.map(\.id))
+                let movedCount = outcome.moved.filter { selected.contains($0.id) }.count
+                var thrown = failure
+                if failure is Cancelled {
+                    context.cancelNote = "\(movedCount) of \(entries.count) selected item(s) moved."
+                } else if let e = failure as? DriveError, movedCount + outcome.skipped.count < entries.count {
+                    thrown = DriveError(message: e.message + " The remaining items were not moved.", isTransport: e.isTransport)
+                }
+                await self.afterFailure(thrown)
+                throw thrown
             }
             if outcome.moved.isEmpty, !outcome.skipped.isEmpty {
                 self.error = "Nothing was moved.\n\n" + outcome.skipped.joined(separator: "\n")
+            }
+            // A folder moved to the root becomes a sidebar shortcut.
+            if destination.id == 0, !self.path.isEmpty, let root = try? await self.device.list(self.storageID, 0) {
+                self.rootFolders = root.entries.filter(\.folder)
             }
             try await self.afterChange()
         }

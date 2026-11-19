@@ -279,7 +279,8 @@ struct BrowserView: View {
         var urls: [URL] = [], ids: [UInt32] = []
         for item in items {
             switch item {
-            case .file(let url): urls.append(url)
+            case .file(let url) where url.isFileURL: urls.append(url)
+            case .file: break
             case .item(let id): ids.append(id)
             }
         }

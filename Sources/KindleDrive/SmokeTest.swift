@@ -118,6 +118,29 @@ enum SmokeTest {
                 try check(outcome.failure == nil && outcome.moved.count == 1, "Move \(label) failed: \(outcome.failure?.localizedDescription ?? "not confirmed")")
                 try check(try has("renamed.txt", in: to) && !(try has("renamed.txt", in: from)), "Move \(label) left the file in the wrong folder")
             }
+            // A folder with contents, there and back.
+            let targetID = try DeviceOps.createFolder("Move Target", storage: storage, parent: id, on: t)
+            for (from, to, label) in [(id, targetID, "of a folder into a subfolder"), (targetID, id, "of a folder back")] {
+                let outcome = DeviceOps.move([try entry("Nested Renamed", in: from)], storage: storage, from: from, to: to, status: status, on: t)
+                try check(outcome.failure == nil && outcome.moved.count == 1, "Move \(label) failed: \(outcome.failure?.localizedDescription ?? "not confirmed")")
+                let folder = try entry("Nested Renamed", in: to)   // the folder may have a new handle
+                try check(!(try has("Nested Renamed", in: from)), "Move \(label) left the folder behind")
+                let inside = try entry("sample.txt", in: folder.id)
+                try check(inside.size == UInt64(payload.count), "Move \(label) changed the size of sample.txt inside the folder")
+            }
+            // A file to the storage root and back; the unique name cannot clash there.
+            let rootName = "KindleDrive-Test-Move-\(UUID().uuidString).txt"
+            try DeviceOps.rename(try entry("renamed.txt", in: id), to: rootName, storage: storage, parent: id, on: t)
+            do {
+                let toRoot = DeviceOps.move([try entry(rootName, in: id)], storage: storage, from: id, to: 0, status: status, on: t)
+                try check(toRoot.failure == nil && toRoot.moved.count == 1, "Move to the top level failed: \(toRoot.failure?.localizedDescription ?? "not confirmed")")
+                try check(try has(rootName, in: 0) && !(try has(rootName, in: id)), "Move to the top level left the file in the wrong folder")
+                let back = DeviceOps.move([try entry(rootName, in: 0)], storage: storage, from: 0, to: id, status: status, on: t)
+                try check(back.failure == nil && back.moved.count == 1, "Move back from the top level failed: \(back.failure?.localizedDescription ?? "not confirmed")")
+                try check(try has(rootName, in: id) && !(try has(rootName, in: 0)), "Move back from the top level left the file in the wrong folder")
+            } catch {
+                throw DriveError(message: "\(error.localizedDescription) The test file ‘\(rootName)’ may be left at the top level of the Kindle's storage: delete it.")
+            }
             print("move\tOK")
         } else {
             print("SKIP move: this Kindle does not support MTP MoveObject")
@@ -155,7 +178,7 @@ enum SmokeTest {
         let probe = Entry(id: probeID, name: probeName, size: 0, modified: Date(), folder: true)
         let cleanup = DeviceOps.delete([probe], storage: storage, parent: 0, status: status, on: t)
         if let failure = cleanup.failure { throw failure }
-        print("PASS: folder creation, upload, duplicate naming, file rename, folder rename, NFC names, complete listing (ids == readable), byte-for-byte downloads with mode 0644, nested folders, recursive download, \(canMove ? "move there and back" : "(move skipped: not supported)"), cancelled-upload cleanup, and verified recursive deletion.")
+        print("PASS: folder creation, upload, duplicate naming, file rename, folder rename, NFC names, complete listing (ids == readable), byte-for-byte downloads with mode 0644, nested folders, recursive download, \(canMove ? "move there and back (file, folder with contents, to root)" : "(move skipped: not supported)"), cancelled-upload cleanup, and verified recursive deletion.")
     }
 
     /// Opt-in (`--smoke-test --documents`): deletion inside the real documents folder,

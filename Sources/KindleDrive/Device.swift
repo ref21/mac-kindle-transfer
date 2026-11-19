@@ -171,6 +171,14 @@ final class Device: @unchecked Sendable {
         }
     }
     static func isJunk(_ name: String) -> Bool { name == ".DS_Store" || name == ".localized" || name.hasPrefix("._") }
+    /// The Kindle's own folders at the storage root (lower-case). Moving one by an accidental
+    /// drag could hide the library, so moves refuse them.
+    static let protectedRootFolders: Set<String> = ["documents", "audible", "fonts", "screenshots", "books", "koreader", "system"]
+    /// The folder where the Kindle keeps a book's reading position and notes: `Book.azw3` → `Book.sdr`.
+    static func sidecarName(for name: String) -> String? {
+        let base = (name as NSString).deletingPathExtension
+        return base == name ? nil : base + ".sdr"
+    }
 
     /// Decides what may be removed after a failed send. This is the only rule by which an
     /// upload may delete anything.
@@ -408,9 +416,10 @@ enum DeviceOps {
     // MARK: Move
 
     /// Moves `entries` (siblings inside `parent`) into `destination`, stops at the first
-    /// error or cancel (checked between items: one MoveObject is atomic), and always
-    /// finishes with fresh listings of both folders to confirm what moved. Names already
-    /// taken in the destination are skipped, never overwritten or renamed.
+    /// error or cancel (checked between items: one MoveObject is atomic), and finishes with
+    /// fresh listings of both folders to confirm what moved. Names already taken in the
+    /// destination are skipped, never overwritten or renamed. A book's `.sdr` folder moves
+    /// right after it. The Kindle's top-level folders are never moved.
     static func move(_ entries: [Entry], storage: UInt32, from parent: UInt32, to destination: UInt32,
                      status: TransferStatus, on t: Transport) -> MoveOutcome {
         var outcome = MoveOutcome()
@@ -421,14 +430,27 @@ enum DeviceOps {
         }
         guard destination != parent else { return outcome }
         var names: Set<String>
-        do { names = Set(try t.list(storage: storage, parent: destination).entries.map { $0.name.lowercased() }) }
-        catch { outcome.failure = error; return outcome }
+        let source: Listing
+        do {
+            names = Set(try t.list(storage: storage, parent: destination).entries.map { $0.name.lowercased() })
+            source = try t.list(storage: storage, parent: parent)
+        } catch { outcome.failure = error; return outcome }
+        let sourceIDs = Set(source.ids), selected = Set(entries.map(\.id))
+        var companions: Set<UInt32> = []    // .sdr folders already handled with their book
         var issued: [Entry] = []
         var failure: Error?
         for (index, entry) in entries.enumerated() {
             if kd_cancelled() != 0 { failure = Cancelled(); break }
             status.set(name: entry.name, index: index + 1)
             if entry.id == destination { continue }   // a folder dropped onto itself within a multi-selection
+            if !sourceIDs.contains(entry.id) {
+                outcome.skipped.append("\(entry.name) — no longer in this folder")
+                continue
+            }
+            if parent == 0, entry.folder, Device.protectedRootFolders.contains(entry.name.lowercased()) {
+                outcome.skipped.append("\(entry.name) — a Kindle system folder; it stays at the top level")
+                continue
+            }
             if names.contains(entry.name.lowercased()) {
                 outcome.skipped.append("\(entry.name) — an item with this name is already in the destination folder")
                 continue
@@ -437,14 +459,30 @@ enum DeviceOps {
             catch { failure = error; break }
             names.insert(entry.name.lowercased())
             issued.append(entry)
+            // The book and its reading data belong together: no cancel check between them.
+            guard !entry.folder, let sidecar = Device.sidecarName(for: entry.name),
+                  let companion = source.entries.first(where: {
+                      $0.folder && $0.name.lowercased() == sidecar.lowercased() && !selected.contains($0.id)
+                          && !companions.contains($0.id) && $0.id != destination
+                  }) else { continue }
+            companions.insert(companion.id)
+            if names.contains(companion.name.lowercased()) {
+                outcome.skipped.append("\(companion.name) — reading data for ‘\(entry.name)’ left in place: the destination already has a folder with this name")
+                continue
+            }
+            do { try t.move(id: companion.id, storage: storage, parent: destination) }
+            catch { failure = error; break }
+            names.insert(companion.name.lowercased())
+            issued.append(companion)
         }
+        guard !issued.isEmpty else { outcome.failure = failure; return outcome }
         do {
-            let sourceIDs = Set(try t.childIDs(storage: storage, parent: parent))
+            let sourceNow = Set(try t.childIDs(storage: storage, parent: parent))
             let target = try t.list(storage: storage, parent: destination)
             let targetIDs = Set(target.ids), targetNames = Set(target.entries.map(\.name))
             for entry in issued {
                 // The device may give a moved object a new handle, so the exact name also counts.
-                if !sourceIDs.contains(entry.id) && (targetIDs.contains(entry.id) || targetNames.contains(entry.name)) {
+                if !sourceNow.contains(entry.id) && (targetIDs.contains(entry.id) || targetNames.contains(entry.name)) {
                     outcome.moved.append(entry)
                 } else {
                     failure = combine(failure, "The Kindle did not confirm that ‘\(entry.name)’ was moved. Refresh to see where it is.", transport: false)

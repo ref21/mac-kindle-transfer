@@ -3,9 +3,9 @@
 ## 1.3 — unreleased
 
 ### Added
-- Move items between folders: drag them onto a folder in the list, a breadcrumb or a sidebar shortcut. Uses the Kindle's MTP move; items whose name is taken in the destination are skipped and listed in Activity. Moves are checked against a fresh listing and can be cancelled between items.
+- Move items between folders: drag them onto a folder in the list, a breadcrumb or a sidebar shortcut. Uses the Kindle's MTP move; items whose name is taken in the destination are skipped and listed in Activity. A book's `.sdr` folder (reading position and notes) moves with it, and the Kindle's own top-level folders (documents, fonts, …) cannot be moved. Moves are checked against a fresh listing and can be cancelled between items.
 - Finder files dropped onto a folder in the list, a breadcrumb or a sidebar shortcut are copied into that folder.
-- `--probe` prints whether the Kindle supports moving; `--smoke-test` moves a file into a folder and back.
+- `--probe` prints whether the Kindle supports moving; `--smoke-test` moves a file and a folder with contents into a folder and back, and a file to the top level and back.
 
 ### Not validated on hardware
 Moving was checked only against the fake device. The drag and drop routing was checked in a separate test harness, not in the app with real mouse drags or on a real Kindle.
