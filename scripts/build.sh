@@ -177,6 +177,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>NSHighResolutionCapable</key><true/>
 <key>NSSupportsAutomaticTermination</key><false/>
 <key>NSHumanReadableCopyright</key><string>Kindle Drive. Includes libmtp and libusb under LGPL.</string>
+<key>UTExportedTypeDeclarations</key>
+<array><dict>
+  <key>UTTypeIdentifier</key><string>io.github.ref21.KindleDrive.item</string>
+  <key>UTTypeDescription</key><string>Kindle Drive item</string>
+  <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+</dict></array>
 </dict></plist>
 PLIST
 plutil -lint "$APP/Contents/Info.plist" >/dev/null || { echo "Error: generated Info.plist is invalid." >&2; exit 1; }

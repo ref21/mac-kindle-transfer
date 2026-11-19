@@ -62,14 +62,15 @@ What you can do:
 
 - **Select.** Click an item. Command-click adds or removes items. Shift-click selects a range. Command-A selects all visible items. Double-click a folder to open it. Use the breadcrumb bar or the Parent Folder button to go back up. The sidebar lists the storages and shortcuts to common folders (documents, audible, fonts, screenshots, books, koreader) that exist on your Kindle.
 - **Sort.** Click Name, Size or Modified. Click again to reverse.
-- **Add files.** Use Add Files (Command-O) or drag files and folders into the list. Folders are copied with their contents.
+- **Add files.** Use Add Files (Command-O) or drag files and folders into the list. Drop them onto a folder in the list, a breadcrumb or a sidebar shortcut to copy them into that folder. Folders are copied with their contents.
+- **Move.** Drag items onto a folder in the list, a breadcrumb or a sidebar shortcut to move them there. A drag that starts on an item moves it; to select several items by dragging, start in empty space. An item whose name already exists in the destination is skipped and listed in Activity. Moving needs a Kindle that supports MTP moves (see Known limitations).
 - **Save to Mac.** Select items, then Save to Mac (Shift-Command-S), or use the context menu. Folders are copied with their contents.
 - **Rename and new folder.** Rename is in the Kindle menu and the context menu. New Folder is Shift-Command-N.
 - **Delete.** Select items, then Delete in the Kindle menu, the context menu, the toolbar or the Delete key. Delete asks for confirmation and is permanent. Folders are deleted with everything in them. After deleting, the app checks a fresh listing from the Kindle. Items that are still there are reported as not deleted. Activity lists the exact path of each item confirmed deleted.
 - **Name conflicts.** Copies are never made over an existing file. A copy whose name is taken gets a number, such as `book (2).azw3`, both on the Kindle and on your Mac. Rename refuses a name that already exists.
 - **Search.** The search field filters the current folder by name.
 - **Hidden files.** Kindle, Show Hidden Files (Shift-Command-period) shows names that start with a dot.
-- **Cancel.** Copies and deletes show progress in the status bar and have a Cancel button. Files already copied or items already deleted stay that way. If cancelling or a failed upload may have left an incomplete copy on the Kindle, an alert says which file; delete it before trying again.
+- **Cancel.** Copies, deletes and moves show progress in the status bar and have a Cancel button. Files already copied and items already deleted or moved stay that way. If cancelling or a failed upload may have left an incomplete copy on the Kindle, an alert says which file; delete it before trying again.
 - **Activity.** The clock button in the status bar lists what happened in this session, including skipped items.
 
 During an upload these items are skipped and listed in Activity: `.DS_Store`, `.localized` and `._` files, symbolic links, items that are not regular files or folders, items that cannot be read, files of 4 GB or more, and names the Kindle cannot use.
@@ -102,6 +103,8 @@ If you quit while a copy or delete is running, the app asks whether to stop it f
 - Apple Silicon only. macOS 14 has only been compile-checked.
 - The app reaches only the storage the Kindle exposes over USB.
 - Deleting is permanent. There is no trash.
+- Moving depends on the Kindle supporting MTP's MoveObject; `--probe` prints whether it does. Moving has not been tested on hardware. Items cannot be dragged out to Finder; use Save to Mac.
+- Moving needs the built app (`dist/Kindle Drive.app`). With `swift run`, dropped Kindle items do nothing.
 - Closing the window during a transfer keeps the app running until it ends; clicking the Dock icon reopens the window.
 
 ## Development
@@ -142,7 +145,7 @@ swift scripts/make-icon.swift
 
 ## Testing status
 
-The app was exercised on one Kindle Paperwhite before release: listing, new folders, upload, duplicate names, rename, download, nested folders and deletion. Later changes to the device layer and the interface (including cancel and disconnect handling) have been checked by automated tests that run against a fake device, and by launching the app in demo mode. On a Kindle Paperwhite, `--probe` passes with the current code, and `--smoke-test` passes every step up to its last one: listing, upload, rename, download, cleanup after a cancelled upload, and verified deletion. Its last step then fails because of the cancel problem described under Known limitations. The interface itself has not yet been run against a real Kindle. See Known limitations for what is untested.
+The app was exercised on one Kindle Paperwhite before release: listing, new folders, upload, duplicate names, rename, download, nested folders and deletion. Later changes to the device layer and the interface (including cancel and disconnect handling) have been checked by automated tests that run against a fake device, and by launching the app in demo mode. On a Kindle Paperwhite, `--probe` passes with the current code, and `--smoke-test` passes every step up to its last one: listing, upload, rename, download, cleanup after a cancelled upload, and verified deletion. Its last step then fails because of the cancel problem described under Known limitations. The interface itself has not yet been run against a real Kindle. Moving items between folders is tested only against the fake device. See Known limitations for what is untested.
 
 ## Licence and third-party software
 

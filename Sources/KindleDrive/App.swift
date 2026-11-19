@@ -103,9 +103,36 @@ import CMTP
     }
 }
 
+extension UTType {
+    /// A Kindle row being dragged inside the app. Declared in the bundle's Info.plist
+    /// (`scripts/build.sh`). An unbundled `swift run` cannot decode it: row drops then arrive
+    /// as empty arrays and do nothing. Use the `.app` to try moving.
+    static let kindleDriveItem = UTType(exportedAs: "io.github.ref21.KindleDrive.item", conformingTo: .data)
+}
+
+/// The drag payload of a Kindle row: only its id, which the model resolves against the open
+/// folder. Finder and other apps do not know the type, so dropping a row there does nothing.
+struct KindleItemDrag: Codable, Transferable {
+    let id: UInt32
+    static var transferRepresentation: some TransferRepresentation { CodableRepresentation(contentType: .kindleDriveItem) }
+}
+
+/// What a drop onto a row, breadcrumb or shortcut can carry. Order is not guaranteed.
+enum DropPayload: Transferable {
+    case item(UInt32), file(URL)
+    static var transferRepresentation: some TransferRepresentation {
+        ProxyRepresentation(importing: { (drag: KindleItemDrag) in DropPayload.item(drag.id) })
+        ProxyRepresentation(importing: { (url: URL) in DropPayload.file(url) })
+    }
+}
+
+/// A breadcrumb segment or sidebar shortcut, to highlight the one under a drag.
+enum DropSpot: Hashable { case depth(Int), shortcut(UInt32) }
+
 struct BrowserView: View {
     @ObservedObject var model: BrowserModel
     @State private var dropTarget = false
+    @State private var dropSpot: DropSpot?
     var body: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 22) {
@@ -137,6 +164,7 @@ struct BrowserView: View {
                             Divider().padding(.vertical, 6)
                             ForEach(model.shortcuts) { folder in
                                 sideButton(folder.name, icon: shortcutIcon(folder.name)) { model.shortcut(folder) }
+                                    .folderDropTarget(.shortcut(folder.id), highlighted: $dropSpot, enabled: canDrop) { drop($0, into: model.folderRef(shortcut: folder)) }
                             }
                         }
                     }.disabled(model.busy)
@@ -154,9 +182,11 @@ struct BrowserView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 5) {
                     Button { model.goTo(0) } label: { Label("Storage Root", systemImage: "internaldrive").labelStyle(.iconOnly) }.help("Storage root")
+                        .folderDropTarget(.depth(0), highlighted: $dropSpot, enabled: canDrop) { drop($0, into: model.folderRef(depth: 0)) }
                     ForEach(Array(model.path.enumerated()), id: \.element.id) { index, entry in
                         Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
                         Button(entry.name) { model.goTo(index + 1) }.lineLimit(1)
+                            .folderDropTarget(.depth(index + 1), highlighted: $dropSpot, enabled: canDrop) { drop($0, into: model.folderRef(depth: index + 1)) }
                     }
                     Spacer()
                     if let note = model.unreadableNote {
@@ -174,7 +204,11 @@ struct BrowserView: View {
                         Button("Connect Kindle") { model.connect() }.buttonStyle(.borderedProminent).tint(.orange).disabled(model.busy)
                     }.frame(maxHeight: .infinity)
                 } else {
-                    Table(model.visible, selection: $model.selection, sortOrder: $model.sortOrder) {
+                    // Every row is a drop target, not only folders: once any row is one, the table
+                    // takes every drag over it, so file rows forward Finder files to the open folder
+                    // and `onInsert` catches drops on empty space and between rows. The table's
+                    // `onDrop` still serves an empty folder (no rows, so the table takes no drags).
+                    Table(of: Entry.self, selection: $model.selection, sortOrder: $model.sortOrder) {
                         TableColumn("Name", value: \.name, comparator: .localizedStandard) { entry in
                             HStack(spacing: 9) {
                                 Image(systemName: entry.folder ? "folder.fill" : "doc.text").foregroundStyle(entry.folder ? .orange : .secondary)
@@ -183,6 +217,9 @@ struct BrowserView: View {
                         }.width(min: 220, ideal: 380)
                         TableColumn("Size", value: \.size) { entry in Text(entry.folder ? "—" : bytes(entry.size)).foregroundStyle(.secondary).monospacedDigit() }.width(90)
                         TableColumn("Modified", value: \.modified) { entry in Text(entry.modified.timeIntervalSince1970 > 0 ? entry.modified.formatted(date: .abbreviated, time: .omitted) : "—").foregroundStyle(.secondary) }.width(115)
+                    } rows: {
+                        ForEach(model.visible) { entry in row(entry) }
+                            .onInsert(of: [UTType.fileURL]) { _, providers in _ = uploadDropped(providers) }
                     }
                     .contextMenu(forSelectionType: UInt32.self) { ids in
                         Button("Open Folder") { if let f = model.files.first(where: { ids.contains($0.id) && $0.folder }) { model.navigate(to: f) } }.disabled(ids.count != 1 || !model.files.contains(where: { ids.contains($0.id) && $0.folder }))
@@ -197,20 +234,7 @@ struct BrowserView: View {
                     .disabled(model.busy)
                     .overlay { if model.visible.isEmpty { ContentUnavailableView(model.search.isEmpty ? "This folder is empty" : "No matching files", systemImage: "folder", description: Text("Drop files here or use Add Files." )).allowsHitTesting(false) } }
                     .overlay { if dropTarget { RoundedRectangle(cornerRadius: 12).stroke(.orange, style: StrokeStyle(lineWidth: 3, dash: [8])).padding(10).allowsHitTesting(false) } }
-                    .onDrop(of: [UTType.fileURL], isTargeted: $dropTarget) { providers in
-                        guard !model.busy else { return false }
-                        Task { @MainActor in
-                            var urls: [URL] = []
-                            for provider in providers {
-                                let url: URL? = await withCheckedContinuation { continuation in
-                                    _ = provider.loadObject(ofClass: URL.self) { url, _ in continuation.resume(returning: url) }
-                                }
-                                if let url { urls.append(url) }
-                            }
-                            model.upload(urls)
-                        }
-                        return true
-                    }
+                    .onDrop(of: [UTType.fileURL], isTargeted: $dropTarget) { providers in uploadDropped(providers) }
                 }
                 Divider()
                 StatusBar(model: model, monitor: model.monitor)
@@ -238,6 +262,49 @@ struct BrowserView: View {
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
     }
+    var canDrop: Bool { !model.busy && model.connection != nil }
+    /// A table row: draggable, and a drop target. A folder row takes Finder files and Kindle
+    /// rows into that folder; any other row passes Finder files to the open folder.
+    @TableRowBuilder<Entry>
+    func row(_ entry: Entry) -> some TableRowContent<Entry> {
+        TableRow(entry)
+            .draggable(KindleItemDrag(id: entry.id))
+            .dropDestination(for: DropPayload.self) { items in drop(items, into: entry.folder ? model.folderRef(child: entry) : nil) }
+    }
+    /// Routes a drop: Finder files are copied into `folder` (nil = the open folder); Kindle rows
+    /// are moved into `folder` (nil = ignored). The model skips the target itself and no-op moves.
+    @discardableResult
+    func drop(_ items: [DropPayload], into folder: FolderRef?) -> Bool {
+        guard canDrop else { return false }
+        var urls: [URL] = [], ids: [UInt32] = []
+        for item in items {
+            switch item {
+            case .file(let url): urls.append(url)
+            case .item(let id): ids.append(id)
+            }
+        }
+        if !urls.isEmpty { model.upload(urls, to: folder); return true }
+        guard let folder, !ids.isEmpty else { return false }
+        model.move(ids, to: folder)
+        return true
+    }
+    /// Finder files dropped on the table outside a row: copied into the open folder. Drops
+    /// that carry no file URL (a Kindle row) are refused.
+    func uploadDropped(_ providers: [NSItemProvider]) -> Bool {
+        let files = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        guard canDrop, !files.isEmpty else { return false }
+        Task { @MainActor in
+            var urls: [URL] = []
+            for provider in files {
+                let url: URL? = await withCheckedContinuation { continuation in
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in continuation.resume(returning: url) }
+                }
+                if let url { urls.append(url) }
+            }
+            model.upload(urls)
+        }
+        return true
+    }
     func sideButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { Label(title, systemImage: icon).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 6) }.buttonStyle(.plain)
     }
@@ -250,6 +317,17 @@ struct BrowserView: View {
         case "screenshots": "camera.viewfinder"
         default: "book"
         }
+    }
+}
+
+private extension View {
+    /// A breadcrumb segment or sidebar shortcut as a drop target, lightly highlighted while a
+    /// drag is over it and drops are possible.
+    func folderDropTarget(_ spot: DropSpot, highlighted: Binding<DropSpot?>, enabled: Bool, perform: @escaping ([DropPayload]) -> Bool) -> some View {
+        background(RoundedRectangle(cornerRadius: 5).fill(Color.orange.opacity(enabled && highlighted.wrappedValue == spot ? 0.25 : 0)).padding(-3))
+            .dropDestination(for: DropPayload.self) { items, _ in perform(items) } isTargeted: { over in
+                if over { highlighted.wrappedValue = spot } else if highlighted.wrappedValue == spot { highlighted.wrappedValue = nil }
+            }
     }
 }
 
