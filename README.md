@@ -97,7 +97,7 @@ If you quit while a copy or delete is running, the app asks whether to stop it f
 ## Known limitations
 
 - Tested on one Kindle Paperwhite only. The Kindle Scribe, Colorsoft and other models are untested. Libmtp's device table knows only the Scribe by name; other models are detected generically.
-- **Cancelling an upload can leave the Kindle refusing new items.** On the tested Paperwhite, after an upload is cancelled partway, the Kindle still lists and deletes, but later copies to it and new folders hang for about a minute and then fail. Unplug and replug the Kindle to recover. Cancelling a download has not been checked on hardware.
+- **Cancelling an upload can leave the Kindle refusing new items.** On the tested Paperwhite, after an upload is cancelled partway, the Kindle still lists and deletes, but later copies to it and new folders hang for about a minute and then fail. Unplug and replug the Kindle to recover. The app warns about this when you cancel a copy partway through a file, and explains it again if a later copy or new folder times out. Cancelling a download has not been checked on hardware.
 - Not yet tested on hardware: very large transfers, unplugging during a transfer, file names with characters such as `: * ? " < > |`, and models other than the Paperwhite. The same goes for the quit confirmation during a real transfer and sleep prevention during transfers.
 - Apple Silicon only. macOS 14 has only been compile-checked.
 - The app reaches only the storage the Kindle exposes over USB.

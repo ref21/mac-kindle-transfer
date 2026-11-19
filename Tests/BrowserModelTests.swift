@@ -61,18 +61,58 @@ final class BrowserModelTests: XCTestCase {
         XCTAssertEqual(model.files.count, 4)             // reloaded after the cancel
     }
 
-    @MainActor func testCancelledUploadIsNotAnError() async throws {
+    @MainActor func testUploadCancelledMidFileWarnsThatTheKindleMayNeedReconnecting() async throws {
         let fake = FakeTransport.sample()
         let model = await connected(fake)
         let url = try localFiles(["Book.azw3": "data"])[0]
-        fake.sendFailure = { _ in kd_cancel(); return nil }
+        fake.sendFailure = { _ in kd_cancel(); return nil }   // cancelled during the data phase
         model.upload([url]); await model.finished()
-        XCTAssertNil(model.error)
+        XCTAssertEqual(model.error, BrowserModel.afterCancelWarning)
+        XCTAssertTrue(model.cancelledMidUpload)
         XCTAssertEqual(model.status, "Adding 1 item(s) to / — cancelled")
         let entries = model.history.filter { $0.contains("— cancelled") }
         XCTAssertEqual(entries.count, 1)
         XCTAssertTrue(entries[0].contains("Stopped. Files already copied were kept."), entries[0])
+        XCTAssertTrue(model.history.contains(BrowserModel.afterCancelWarning))
         XCTAssertNil(fake.node(named: "Book.azw3"))      // the partial copy was removed
+    }
+
+    @MainActor func testUploadCancelledBeforeAnyDataIsNotAnError() async throws {
+        let fake = FakeTransport.sample()
+        let model = await connected(fake)
+        let urls = try localFiles(["A.azw3": "a", "B.azw3": "b"])
+        // The cancel lands while B is being announced, before any of its data is sent.
+        fake.sendFailure = { name in name == "B.azw3" ? { kd_cancel(); return .beforeData(itemID: 0) }() : nil }
+        model.upload(urls); await model.finished()
+        XCTAssertNil(model.error)
+        XCTAssertFalse(model.cancelledMidUpload)
+        XCTAssertEqual(model.status, "Adding 2 item(s) to / — cancelled")
+        XCTAssertNotNil(fake.node(named: "A.azw3"))
+    }
+
+    @MainActor func testTimeoutAfterAMidFileCancelExplainsHowToRecover() async throws {
+        let fake = FakeTransport.sample()
+        let model = await connected(fake)
+        let urls = try localFiles(["Book.azw3": "data", "Next.azw3": "next"])
+        fake.sendFailure = { _ in kd_cancel(); return nil }
+        model.upload([urls[0]]); await model.finished()
+        model.error = nil
+
+        fake.sendFailure = { _ in .timeout }
+        model.upload([urls[1]]); await model.finished()
+        let error = try XCTUnwrap(model.error)
+        XCTAssertTrue(error.hasPrefix(BrowserModel.stalledAfterCancel), error)
+        XCTAssertTrue(error.contains("PTP Layer error 02ff"), error)   // details kept
+        XCTAssertNotNil(model.connection)                // still connected: not a disconnect
+        XCTAssertTrue(model.history.contains(BrowserModel.stalledAfterCancel))
+
+        // Disconnecting clears what the app knows; the next timeout gets the general hint.
+        model.disconnect(); await model.finished()
+        XCTAssertFalse(model.cancelledMidUpload)
+        model.connect(); await model.finished()
+        model.error = nil
+        model.upload([urls[1]]); await model.finished()
+        XCTAssertTrue(model.error?.hasPrefix(BrowserModel.notRespondingHint) == true, model.error ?? "nil")
     }
 
     @MainActor func testPartialDeleteLogsVerifiedItemsAndReportsTheFailure() async {
@@ -99,7 +139,9 @@ final class BrowserModelTests: XCTestCase {
 
         fake.failNextListing = true
         model.chooseStorage(0x0002_0001); await model.finished()
-        XCTAssertNotNil(model.error); model.error = nil
+        XCTAssertNotNil(model.error)
+        XCTAssertFalse(model.error?.contains(BrowserModel.notRespondingHint) == true)   // listing: no reconnect advice
+        model.error = nil
         XCTAssertEqual(model.storageID, storage)
         XCTAssertEqual(model.path.map(\.name), ["documents"])
         XCTAssertEqual(model.files.map(\.id), files)

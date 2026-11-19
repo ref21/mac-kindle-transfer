@@ -128,7 +128,7 @@ final class UploadTests: DeviceOpsTestCase {
         t.sendFailure = { _ in kd_cancel(); return nil }       // the user cancels during the send
         XCTAssertThrowsError(try DeviceOps.upload([try localFile("Big.pdf")], storage: storage, parent: 0, status: status, on: t)) {
             XCTAssertNil(($0 as? Cancelled)?.note)
-            XCTAssertTrue($0 is Cancelled)
+            XCTAssertEqual(($0 as? Cancelled)?.duringUpload, true)
         }
         XCTAssertEqual(names(), [])
     }
@@ -225,7 +225,9 @@ final class UploadTests: DeviceOpsTestCase {
     }
     func testCancelBeforeAnItemStopsTheBatchWithCancelled() throws {
         kd_cancel()
-        XCTAssertThrowsError(try DeviceOps.upload([try localFile("Book.epub")], storage: storage, parent: 0, status: status, on: t)) { XCTAssertTrue($0 is Cancelled) }
+        XCTAssertThrowsError(try DeviceOps.upload([try localFile("Book.epub")], storage: storage, parent: 0, status: status, on: t)) {
+            XCTAssertEqual(($0 as? Cancelled)?.duringUpload, false)   // no file was in progress
+        }
         XCTAssertEqual(names(), [])
     }
 }

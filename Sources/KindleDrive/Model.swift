@@ -50,6 +50,15 @@ final class OperationContext {
     static let noKindleStatus = "No Kindle found. Connect it by USB, then click Connect Kindle."
     static let disconnectedStatus = "The Kindle was disconnected."
     static let epubNote = "Note: the Kindle's built-in reader can't open .epub files copied by USB. Convert them (for example to AZW3 or KFX) or use Send to Kindle; reader apps such as KOReader can open them."
+    static let reconnectSteps = "click Disconnect, unplug the Kindle, plug it back in, then click Connect Kindle."
+    /// Shown when an upload is stopped partway through a file (see `Cancelled.duringUpload`).
+    static let afterCancelWarning = "The copy was stopped partway through a file. After this, the Kindle may not accept new files or folders until it is reconnected: \(reconnectSteps) Browsing, saving to your Mac and deleting still work."
+    /// The same, when the app is quitting (Stop and Quit).
+    static let quitAfterCancelWarning = "The copy was stopped partway through a file. Before you use the Kindle with Kindle Drive again, unplug it and plug it back in; until then it may not accept new files or folders."
+    /// A later copy or new folder timed out after such a cancel.
+    static let stalledAfterCancel = "The Kindle stopped accepting new files and folders after the cancelled copy. To fix this, \(reconnectSteps)"
+    /// The same timeout with no cancel seen in this connection.
+    static let notRespondingHint = "The Kindle did not respond in time, although it is still connected. If a copy was stopped partway through a file earlier, the Kindle needs to be reconnected: \(reconnectSteps)"
     static let shortcutNames = ["documents", "audible", "fonts", "screenshots", "books", "koreader"]
     static let historyLimit = 500
 
@@ -67,6 +76,9 @@ final class OperationContext {
     @Published var status = "Connect your Kindle to get started."
     @Published var error: String?
     @Published var history: [String] = []
+    /// An upload was stopped partway through a file in this connection, so the Kindle may
+    /// refuse new items until it is replugged. Cleared with the connection.
+    @Published private(set) var cancelledMidUpload = false
     let device: Device
     let monitor: TransferMonitor
     let demo: Bool
@@ -112,7 +124,8 @@ final class OperationContext {
     // MARK: Running operations
 
     /// The only way to start a device operation: one at a time, while `busy`.
-    func perform(_ label: String, kind: Kind = .plain, quietIfNoKindle: Bool = false,
+    /// `creates`: the operation makes new items on the Kindle (copy to it, new folder).
+    func perform(_ label: String, kind: Kind = .plain, quietIfNoKindle: Bool = false, creates: Bool = false,
                  _ action: @escaping (OperationContext) async throws -> Void) {
         guard !busy else { return }
         busy = true; status = label; kd_reset_transfer()
@@ -138,30 +151,42 @@ final class OperationContext {
                 status = "\(label) — cancelled"
                 let wording = kind == .delete ? "Stopped. Items already deleted stay deleted." : "Stopped. Files already copied were kept."
                 record([status + ".", wording, context.cancelNote, cancelled.note].compactMap { $0 }.joined(separator: " "))
-                // The device layer sets a note only when the user must act on something
-                // (for example an incomplete copy that could not be removed).
-                if let note = cancelled.note { self.error = note }
+                if cancelled.duringUpload { cancelledMidUpload = true; record(Self.afterCancelWarning) }
+                // Alert only when the user must act on something: an incomplete copy that
+                // could not be removed, or a Kindle that may need reconnecting.
+                let notes = [cancelled.note, cancelled.duringUpload ? Self.afterCancelWarning : nil].compactMap { $0 }
+                if !notes.isEmpty { self.error = notes.joined(separator: "\n\n") }
             } catch let failure as ConnectError where quietIfNoKindle && failure.kind == .noDevice {
                 status = Self.noKindleStatus
             } catch {
-                await fail(label, error)
+                await fail(label, error, creates: creates)
             }
         }
     }
-    private func fail(_ label: String, _ error: Error) async {
+    private func fail(_ label: String, _ error: Error, creates: Bool) async {
+        let transport = connection != nil && (error as? DriveError)?.isTransport == true
         // Only a transport failure while connected can mean the Kindle is gone.
-        if connection != nil, (error as? DriveError)?.isTransport == true, !(await device.isAlive()) {
+        if transport, !(await device.isAlive()) {
+            let replug = cancelledMidUpload
             clearConnection()
             status = Self.disconnectedStatus
             record("\(label) — stopped: \(error.localizedDescription)")
             record(status)
-            self.error = "The Kindle was disconnected. Connect it again, then click Connect Kindle.\n\n\(error.localizedDescription)"
+            self.error = (replug ? "The Kindle stopped responding after the cancelled copy. Unplug it, plug it back in, then click Connect Kindle."
+                                 : "The Kindle was disconnected. Connect it again, then click Connect Kindle.") + "\n\n\(error.localizedDescription)"
             // Releasing a dead device can block for a while; `busy` stays set until it is done.
             try? await device.disconnect()
             return
         }
         status = "\(label) — stopped"
         record("\(status): \(error.localizedDescription)")
+        // Still connected but timed out: on the tested Kindle this follows a cancelled upload.
+        if transport, creates {
+            let advice = cancelledMidUpload ? Self.stalledAfterCancel : Self.notRespondingHint
+            record(advice)
+            self.error = advice + "\n\n" + error.localizedDescription
+            return
+        }
         self.error = error.localizedDescription
     }
     /// Runs `handler` once no operation is running (now, if none is).
@@ -173,6 +198,7 @@ final class OperationContext {
 
     private func clearConnection() {
         connection = nil; files = []; path = []; selection = []; rootFolders = []; unreadable = 0
+        cancelledMidUpload = false
     }
 
     // MARK: Location
@@ -246,7 +272,7 @@ final class OperationContext {
     }
     func upload(_ urls: [URL]) {
         guard connection != nil, !urls.isEmpty else { return }
-        perform("Adding \(urls.count) item(s) to \(location)", kind: .copy) { context in
+        perform("Adding \(urls.count) item(s) to \(location)", kind: .copy, creates: true) { context in
             let summary: UploadSummary
             do { summary = try await self.device.upload(urls, storage: self.storageID, parent: self.parent, status: context.status) }
             catch { await self.afterFailure(error); throw error }
@@ -296,7 +322,7 @@ final class OperationContext {
     }
     func createFolder(named typed: String) {
         let name = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        perform("Creating folder") { _ in
+        perform("Creating folder", creates: true) { _ in
             try await self.device.createFolder(name, self.storageID, self.parent); try await self.afterChange()
         }
     }

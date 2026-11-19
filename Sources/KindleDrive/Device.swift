@@ -12,6 +12,9 @@ struct DriveError: LocalizedError {
 /// example an incomplete copy that could not be removed.
 struct Cancelled: LocalizedError {
     var note: String?
+    /// An upload was stopped partway through a file. The tested Kindle then stops accepting
+    /// new items until it is unplugged and plugged back in (README, Known limitations).
+    var duringUpload = false
     var errorDescription: String? { "Cancelled. Completed files have been kept." + (note.map { " " + $0 } ?? "") }
 }
 struct ConnectError: LocalizedError {
@@ -253,7 +256,8 @@ enum DeviceOps {
             let cancelled = kd_cancelled() != 0
             let failure = t.lastFailure()   // read before the cleanup calls replace it
             let note = cleanUpFailedSend(result, name: name, storage: storage, parent: parent, on: t)
-            if cancelled { throw Cancelled(note: note) }
+            // libmtp cancels only from the progress callback, i.e. during the data phase.
+            if cancelled { throw Cancelled(note: note, duringUpload: result.dataPhase) }
             throw DriveError(message: failure.message + (note.map { " " + $0 } ?? ""), isTransport: failure.isTransport)
         }
     }
@@ -393,7 +397,7 @@ enum DeviceOps {
     private static func combine(_ earlier: Error?, _ text: String, transport: Bool) -> Error {
         switch earlier {
         case nil: return DriveError(message: text, isTransport: transport)
-        case let cancelled as Cancelled: return Cancelled(note: [cancelled.note, text].compactMap { $0 }.joined(separator: " "))
+        case let cancelled as Cancelled: return Cancelled(note: [cancelled.note, text].compactMap { $0 }.joined(separator: " "), duringUpload: cancelled.duringUpload)
         case let e as DriveError: return DriveError(message: e.message + " " + text, isTransport: e.isTransport || transport)
         case let e?: return DriveError(message: e.localizedDescription + " " + text, isTransport: transport)
         }

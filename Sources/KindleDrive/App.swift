@@ -88,7 +88,7 @@ import CMTP
     private func replyToQuit(timedOut: Bool = false) {
         guard quitPending else { return }
         quitPending = false
-        var warning = model?.error
+        var warning = model?.error?.replacingOccurrences(of: BrowserModel.afterCancelWarning, with: BrowserModel.quitAfterCancelWarning)
         if timedOut, model?.busy == true {
             warning = "The operation did not stop in time. If a file was being copied, an incomplete copy may remain on the Kindle. Check the folder after reconnecting."
         }

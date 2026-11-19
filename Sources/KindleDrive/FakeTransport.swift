@@ -13,7 +13,8 @@ final class FakeTransport: Transport {
         var data = Data()
         var modified = Date(timeIntervalSince1970: 1_750_000_000)
     }
-    enum SendFailure { case beforeData(itemID: UInt32), midData }
+    /// `timeout`: the request itself times out, as on a Kindle after a cancelled upload.
+    enum SendFailure { case beforeData(itemID: UInt32), midData, timeout }
 
     let storageID: UInt32 = 0x0001_0001
     var modelName = "Kindle (demo)"
@@ -141,7 +142,13 @@ final class FakeTransport: Transport {
         func rejected(_ message: String, itemID: UInt32 = 0x3000) -> SendResult {
             _ = fail(message); return SendResult(status: -1, itemID: itemID, dataPhase: false)
         }
-        if case .beforeData(let itemID)? = sendFailure?(name) { return rejected("The Kindle rejected the file.", itemID: itemID) }
+        switch sendFailure?(name) {
+        case .beforeData(let itemID)?: return rejected("The Kindle rejected the file.", itemID: itemID)
+        case .timeout?:
+            _ = fail("PTP Layer error 02ff: send_file_object_info(): Could not send object info.", transport: true)
+            return SendResult(status: -1, itemID: 0, dataPhase: false)
+        default: break
+        }
         guard let data = FileManager.default.contents(atPath: path) else { return rejected("Could not open source file.", itemID: 0) }
         guard !taken(name, in: parent) else { return rejected("An item with that name already exists.") }
         guard UInt64(data.count) <= capacity - min(capacity, used) else { return rejected("The Kindle is full.") }
