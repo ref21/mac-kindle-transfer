@@ -84,7 +84,7 @@ If you quit while a copy or delete is running, the app asks whether to stop it f
 
 **"No Kindle was detected" or "could not be opened".** Check the cable (it must carry data) and that the Kindle is awake and in file-transfer mode. Quit the other apps listed above. If it still fails, quit and reopen Kindle Drive, or unplug and replug the Kindle.
 
-**The Kindle was unplugged or stopped responding during an operation.** The app checks whether the Kindle is still there. If not, it shows an alert and returns to the disconnected state. Reconnect the cable and click Connect Kindle. Releasing a dead connection can take a while; Connect stays disabled until it finishes. Disconnecting may also make the Kindle leave transfer mode; if it does, switch it back or replug the cable.
+**The Kindle was unplugged or stopped responding during an operation.** The app checks whether the Kindle is still there. If not, it shows an alert and returns to the disconnected state. Reconnect the cable and click Connect Kindle. Releasing a dead connection can take a while; Connect stays disabled until it finishes. After a connection fails like this, the Kindle may also leave transfer mode; if it does, switch it back or replug the cable.
 
 **Changes made on the Kindle do not show up.** Libmtp caches file details for each session. Disconnect and connect again.
 
@@ -141,7 +141,7 @@ swift scripts/make-icon.swift
 
 ## Testing status
 
-The app was exercised on one Kindle Paperwhite before release: listing, new folders, upload, duplicate names, rename, download, nested folders and deletion. Later changes to the device layer and the interface (including cancel and disconnect handling) have been checked by automated tests that run against a fake device, and by launching the app in demo mode. Those changes have not all been run on a real Kindle. See Known limitations for what is untested.
+The app was exercised on one Kindle Paperwhite before release: listing, new folders, upload, duplicate names, rename, download, nested folders and deletion. Later changes to the device layer and the interface (including cancel and disconnect handling) have been checked by automated tests that run against a fake device, and by launching the app in demo mode. On a Kindle Paperwhite, `--probe` and `--smoke-test` pass with the current code, including cleanup after a cancelled upload and verified deletion. The interface itself has not yet been run against a real Kindle. See Known limitations for what is untested.
 
 ## Licence and third-party software
 

@@ -3,6 +3,7 @@
 ## 1.2 — unreleased
 
 ### Fixed
+- The Kindle no longer drops off USB when Kindle Drive disconnects or quits. libmtp sent the Kindle a USB reset on every disconnect, which the Kindle treated as an eject.
 - A failed or cancelled upload no longer risks deleting the wrong item. Only the partial file the upload itself created is removed, and if that cannot be confirmed, the app tells you an incomplete copy may remain.
 - Delete now checks a fresh listing from the Kindle. Items that are still there are reported instead of counted as deleted, and confirmed paths are logged in Activity.
 - Folders that contain items the app could not read are no longer deleted, and unreadable items are reported in the folder view.

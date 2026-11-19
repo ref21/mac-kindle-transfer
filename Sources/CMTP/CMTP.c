@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+// DEVICE_FLAG_FORCE_RESET_ON_CLOSE from libmtp's private device-flags.h.
+#define KD_FLAG_FORCE_RESET_ON_CLOSE 0x10000000U
+
 // USB queue only.
 static LIBMTP_mtpdevice_t *device;
 static uint16_t vendor_id, product_id;
@@ -64,6 +67,14 @@ int kd_connect(void) {
     for (int i = 0; i < count; i++) {
         if (raw[i].device_entry.vendor_id != 0x1949) continue;
         kindles++;
+        // libmtp's table gives the Kindle e-reader id 1949:9981 the Android bug flags,
+        // which include DEVICE_FLAG_FORCE_RESET_ON_CLOSE (device-flags.h): every
+        // LIBMTP_Release_Device then sends a USB reset (libusb1-glue.c, close_usb), and
+        // the Kindle treats that as an eject and leaves USB until it is replugged. The
+        // flags are copied from this entry when the device is opened. (libmtp re-adds the
+        // Android flags only for devices reporting the "android.com" MTP extension, which
+        // Kindle e-readers do not; --dump prints the flags in effect.)
+        raw[i].device_entry.device_flags &= ~KD_FLAG_FORCE_RESET_ON_CLOSE;
         device = LIBMTP_Open_Raw_Device_Uncached(&raw[i]);
         if (device) { vendor_id = raw[i].device_entry.vendor_id; product_id = raw[i].device_entry.product_id; break; }
     }
