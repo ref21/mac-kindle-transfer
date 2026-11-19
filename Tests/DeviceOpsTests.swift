@@ -473,3 +473,125 @@ final class DownloadTests: DeviceOpsTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: temp.path), [])
     }
 }
+
+final class MoveTests: DeviceOpsTestCase {
+    private func move(_ ids: [UInt32], from parent: UInt32 = 0, to destination: UInt32) -> MoveOutcome {
+        DeviceOps.move(ids.map(entry), storage: storage, from: parent, to: destination, status: status, on: t)
+    }
+    func testMovesAFileIntoASiblingFolder() {
+        let folder = t.addFolder("Series"), book = t.addFile("A.epub")
+        let outcome = move([book], to: folder)
+        XCTAssertNil(outcome.failure)
+        XCTAssertEqual(outcome.moved.map(\.id), [book])
+        XCTAssertEqual(names(), ["Series"])
+        XCTAssertEqual(names(in: folder), ["A.epub"])
+    }
+    func testMovesSeveralItemsAndAFolderBringsItsChildren() {
+        let dest = t.addFolder("Dest"), sub = t.addFolder("Sub")
+        let inner = t.addFile("Inner.txt", parent: sub), a = t.addFile("A.txt"), b = t.addFile("B.txt")
+        let outcome = move([a, sub, b], to: dest)
+        XCTAssertNil(outcome.failure)
+        XCTAssertEqual(outcome.moved.map(\.id), [a, sub, b])
+        XCTAssertEqual(names(), ["Dest"])
+        XCTAssertEqual(names(in: dest), ["Sub", "A.txt", "B.txt"])
+        XCTAssertEqual(t.nodes[inner]?.parent, sub)
+    }
+    func testMovesFromASubfolderToTheRoot() {
+        let folder = t.addFolder("Series"), book = t.addFile("A.epub", parent: folder)
+        let outcome = move([book], from: folder, to: 0)
+        XCTAssertNil(outcome.failure)
+        XCTAssertEqual(outcome.moved.map(\.id), [book])
+        XCTAssertEqual(names(), ["Series", "A.epub"])
+        XCTAssertEqual(names(in: folder), [])
+    }
+    func testNameTakenInTheDestinationIsSkippedCaseInsensitivelyAndOthersMove() {
+        let dest = t.addFolder("Dest"), clash = t.addFile("book.epub", parent: dest)
+        let a = t.addFile("Book.EPUB"), b = t.addFile("Other.epub")
+        let outcome = move([a, b], to: dest)
+        XCTAssertNil(outcome.failure)
+        XCTAssertEqual(outcome.moved.map(\.id), [b])
+        XCTAssertEqual(outcome.skipped, ["Book.EPUB — an item with this name is already in the destination folder"])
+        XCTAssertEqual(t.nodes[a]?.parent, 0)
+        XCTAssertEqual(t.nodes[clash]?.parent, dest)
+        XCTAssertEqual(t.moveCalls, [b])
+    }
+    func testTwoItemsWithTheSameNameCannotBothMove() {
+        let dest = t.addFolder("Dest"), sub = t.addFolder("Sub")
+        let a = t.addFile("Same.txt"), b = t.addFile("same.txt", parent: sub)
+        _ = b
+        let outcome = move([a], to: dest)
+        XCTAssertEqual(outcome.moved.map(\.id), [a])
+        let again = move([b], from: sub, to: dest)
+        XCTAssertEqual(again.moved, [])
+        XCTAssertEqual(again.skipped.count, 1)
+    }
+    func testAFolderDroppedOntoItselfIsLeftOutSilently() {
+        let folder = t.addFolder("Folder"), book = t.addFile("A.epub")
+        let outcome = move([folder, book], to: folder)
+        XCTAssertNil(outcome.failure)
+        XCTAssertEqual(outcome.moved.map(\.id), [book])
+        XCTAssertEqual(outcome.skipped, [])
+        XCTAssertEqual(t.moveCalls, [book])
+        XCTAssertEqual(t.nodes[folder]?.parent, 0)
+    }
+    func testNothingIsDoneWhenTheDestinationIsTheSource() {
+        let a = t.addFile("A.epub")
+        let outcome = move([a], to: 0)
+        XCTAssertNil(outcome.failure)
+        XCTAssertEqual(outcome.moved, [])
+        XCTAssertEqual(t.moveCalls, [])
+    }
+    func testADeviceWithoutMoveFailsWithAnExplanationAndTouchesNothing() {
+        let folder = t.addFolder("Series"), book = t.addFile("A.epub")
+        t.supportsMove = false
+        let outcome = move([book], to: folder)
+        XCTAssertEqual(message(outcome.failure), "This Kindle does not support moving items. To move them, save them to your Mac, add them to the other folder, then delete the originals.")
+        XCTAssertEqual(outcome.moved, [])
+        XCTAssertEqual(outcome.skipped, [])
+        XCTAssertEqual(t.moveCalls, [])
+    }
+    func testErrorOnTheSecondOfThreeStopsTheBatch() {
+        let dest = t.addFolder("Dest")
+        let a = t.addFile("A.epub"), b = t.addFile("B.epub"), c = t.addFile("C.epub")
+        t.moveFails = [b]
+        let outcome = move([a, b, c], to: dest)
+        XCTAssertEqual(outcome.moved.map(\.id), [a])
+        XCTAssertEqual(message(outcome.failure), "The Kindle refused to move the item.")
+        XCTAssertEqual(t.moveCalls, [a, b])
+        XCTAssertEqual(t.nodes[c]?.parent, 0)
+    }
+    func testAMoveThatReportsSuccessButChangedNothingIsNotConfirmed() {
+        let dest = t.addFolder("Dest")
+        let a = t.addFile("A.epub"), b = t.addFile("B.epub")
+        t.moveSilentlyKeeps = [a]
+        let outcome = move([a, b], to: dest)
+        XCTAssertEqual(outcome.moved.map(\.id), [b])
+        XCTAssertTrue(message(outcome.failure).contains("did not confirm that ‘A.epub’ was moved"), message(outcome.failure))
+    }
+    func testCancelBetweenItemsKeepsTheFirstAndLeavesTheRest() {
+        let dest = t.addFolder("Dest")
+        let a = t.addFile("A.epub"), b = t.addFile("B.epub"), c = t.addFile("C.epub")
+        t.moveHook = { _ in kd_cancel() }                // the cancel is seen before the next item
+        let outcome = move([a, b, c], to: dest)
+        XCTAssertEqual(outcome.moved.map(\.id), [a])
+        XCTAssertTrue(outcome.failure is Cancelled)
+        XCTAssertEqual(t.moveCalls, [a])
+    }
+    func testNothingIsReportedMovedWhenTheVerificationListingFails() {
+        let dest = t.addFolder("Dest")
+        let a = t.addFile("A.epub"), b = t.addFile("B.epub")
+        t.moveHook = { id in if id == b { self.t.failNextListing = true } }
+        let outcome = move([a, b], to: dest)
+        XCTAssertEqual(outcome.moved, [])
+        XCTAssertTrue(message(outcome.failure).contains("The move could not be confirmed"), message(outcome.failure))
+        XCTAssertTrue((outcome.failure as? DriveError)?.isTransport == true)
+        XCTAssertEqual(t.moveCalls, [a, b])
+    }
+    func testAFolderCannotBeMovedIntoItsOwnDescendant() {
+        let outer = t.addFolder("Outer"), inner = t.addFolder("Inner", parent: outer)
+        let outcome = move([outer], to: inner)
+        XCTAssertEqual(outcome.moved, [])
+        XCTAssertEqual(message(outcome.failure).hasPrefix("A folder cannot be moved into itself."), true, message(outcome.failure))
+        XCTAssertEqual(t.nodes[outer]?.parent, 0)
+    }
+}

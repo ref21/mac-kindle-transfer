@@ -271,6 +271,91 @@ final class BrowserModelTests: XCTestCase {
         XCTAssertEqual(model.history.first, "line 599")
     }
 
+    // MARK: Move and upload into a folder
+
+    @MainActor func testMoveIntoAFolderReloadsRecordsPathsAndFinishesWithDone() async throws {
+        let fake = FakeTransport.sample()
+        let model = await connected(fake)
+        await open("documents", model)
+        let book = try XCTUnwrap(model.files.first { $0.name == "Walden.pdf" })
+        let series = try XCTUnwrap(model.files.first { $0.name == "Sherlock Holmes" })
+        model.move([book.id], to: model.folderRef(child: series)); await model.finished()
+        XCTAssertNil(model.error)
+        XCTAssertEqual(model.status, "Moving 1 item(s) to /documents/Sherlock Holmes — done")
+        XCTAssertFalse(model.files.contains { $0.name == "Walden.pdf" })
+        XCTAssertNotNil(fake.node(named: "Walden.pdf", in: series.id))
+        XCTAssertTrue(model.history.contains { $0.hasSuffix("Moved: /documents/Walden.pdf → /documents/Sherlock Holmes") }, model.history.joined(separator: "\n"))
+    }
+
+    @MainActor func testMoveUpOneLevelFromBreadcrumbDepth() async throws {
+        let fake = FakeTransport.sample()
+        let model = await connected(fake)
+        await open("documents", model)
+        let book = try XCTUnwrap(model.files.first { $0.name == "Walden.pdf" })
+        XCTAssertEqual(model.folderRef(depth: 0), FolderRef(id: 0, names: []))
+        model.move([book.id], to: model.folderRef(depth: 0)); await model.finished()
+        XCTAssertEqual(model.status, "Moving 1 item(s) to / — done")
+        XCTAssertNotNil(fake.node(named: "Walden.pdf"))
+        XCTAssertNil(fake.node(named: "Walden.pdf", in: model.parent))
+        XCTAssertTrue(model.history.contains { $0.hasSuffix("Moved: /documents/Walden.pdf → /") })
+    }
+
+    @MainActor func testMovingOnlyClashingNamesShowsWhyNothingMoved() async throws {
+        let fake = FakeTransport.sample()
+        let documents = try XCTUnwrap(fake.node(named: "documents")).id
+        fake.addFile("walden.pdf")                       // the same name already in the root
+        let model = await connected(fake)
+        await open("documents", model)
+        let book = try XCTUnwrap(model.files.first { $0.name == "Walden.pdf" })
+        model.move([book.id], to: model.folderRef(depth: 0)); await model.finished()
+        let error = try XCTUnwrap(model.error)
+        XCTAssertTrue(error.hasPrefix("Nothing was moved."), error)
+        XCTAssertTrue(error.contains("Walden.pdf — an item with this name is already"), error)
+        XCTAssertEqual(model.status, "Moving 1 item(s) to / — done, 1 skipped")
+        XCTAssertNotNil(fake.node(named: "Walden.pdf", in: documents))
+    }
+
+    @MainActor func testUploadIntoAChosenFolderAndPlainUploadIntoTheOpenFolder() async throws {
+        let fake = FakeTransport.sample()
+        let model = await connected(fake)
+        await open("documents", model)
+        let series = try XCTUnwrap(model.files.first { $0.name == "Sherlock Holmes" })
+        let urls = try localFiles(["Hound.azw3": "data", "Other.azw3": "data"])
+        model.upload([urls[0]], to: model.folderRef(child: series)); await model.finished()
+        XCTAssertEqual(model.status, "Adding 1 item(s) to /documents/Sherlock Holmes — done")
+        XCTAssertNotNil(fake.node(named: "Hound.azw3", in: series.id))
+        XCTAssertFalse(model.files.contains { $0.name == "Hound.azw3" })
+        model.upload([urls[1]]); await model.finished()
+        XCTAssertEqual(model.status, "Adding 1 item(s) to /documents — done")
+        XCTAssertTrue(model.files.contains { $0.name == "Other.azw3" })
+    }
+
+    @MainActor func testCancelledMoveIsNotAnErrorAndSaysItemsStayMoved() async throws {
+        let fake = FakeTransport.sample()
+        let model = await connected(fake)
+        await open("documents", model)
+        let series = try XCTUnwrap(model.files.first { $0.name == "Sherlock Holmes" })
+        let books = model.files.filter { !$0.folder }
+        fake.moveHook = { _ in kd_cancel() }
+        model.move(books.map(\.id), to: model.folderRef(child: series)); await model.finished()
+        XCTAssertNil(model.error)
+        XCTAssertEqual(model.status, "Moving 3 item(s) to /documents/Sherlock Holmes — cancelled")
+        XCTAssertTrue(model.history.contains { $0.contains("Items already moved stay moved.") })
+        XCTAssertEqual(fake.moveCalls.count, 1)
+    }
+
+    @MainActor func testIdsOutsideTheOpenFolderAreIgnored() async throws {
+        let fake = FakeTransport.sample()
+        let model = await connected(fake)
+        let fonts = try XCTUnwrap(model.files.first { $0.name == "fonts" })
+        let elsewhere = try XCTUnwrap(fake.node(named: "Readme.txt", in: fonts.id)).id
+        model.move([elsewhere, 9999], to: model.folderRef(child: fonts)); await model.finished()
+        XCTAssertEqual(fake.moveCalls, [])
+        XCTAssertEqual(model.status, "Connecting — done")
+        model.move([fonts.id], to: model.folderRef(child: fonts)); await model.finished()   // itself
+        XCTAssertEqual(fake.moveCalls, [])
+    }
+
     // MARK: Helpers
 
     private var temp: URL?
