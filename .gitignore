@@ -20,3 +20,4 @@ Vendor/libmtp-1.1.22/stamp-h1
 Vendor/libmtp-1.1.22/examples/mtp-*
 Vendor/libmtp-1.1.22/util/mtp-hotplug
 Vendor/libmtp-1.1.22/util/mtp-probe
+tmp/

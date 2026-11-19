@@ -1,0 +1,17 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install libusb
+        run: brew install libusb
+      - name: Unit tests
+        run: ./scripts/test.sh
+      - name: Build app bundle
+        run: ./scripts/build.sh
+      - name: Verify signature
+        run: codesign --verify --deep --strict "dist/Kindle Drive.app"
