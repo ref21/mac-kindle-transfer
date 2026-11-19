@@ -24,11 +24,13 @@ enum SmokeTest {
             }
             if arguments.contains("--dump") { kd_dump_device_info() }
             if mutate {
-                try roundTrip(t, storage)
+                // documents/ first: the round trip ends with a cancelled upload, which can
+                // leave the Kindle refusing new items for the rest of the connection.
                 if arguments.contains("--documents") {
                     guard let documents else { throw DriveError(message: "This Kindle has no documents folder.") }
                     try verifyDocumentsDeletion(t, storage, documents.id)
                 }
+                try roundTrip(t, storage)
             }
             t.close(); exit(0)
         } catch {
@@ -115,6 +117,20 @@ enum SmokeTest {
         removed = outcome.verified.count == 1
         if let failure = outcome.failure { throw failure }
         try check(removed && !(try t.childIDs(storage: storage, parent: 0)).contains(id), "Test folder cleanup failed")
+
+        // The Kindle must still accept new items after the cancelled upload. On a Kindle
+        // Paperwhite (2026-11-19) it accepted one immediately after the cancel but refused
+        // later ones (about a minute's hang, then PTP 02ff) until it was replugged.
+        let probeName = "KindleDrive-Test-AfterCancel-\(UUID().uuidString)"
+        let start = Date()
+        let probeID: UInt32
+        do { probeID = try DeviceOps.createFolder(probeName, storage: storage, parent: 0, on: t) }
+        catch {
+            throw DriveError(message: "After a cancelled upload the Kindle refused to create a folder (\(String(format: "%.1f", Date().timeIntervalSince(start))) s): \(error.localizedDescription) Unplug and replug the Kindle before using it again.")
+        }
+        let probe = Entry(id: probeID, name: probeName, size: 0, modified: Date(), folder: true)
+        let cleanup = DeviceOps.delete([probe], storage: storage, parent: 0, status: status, on: t)
+        if let failure = cleanup.failure { throw failure }
         print("PASS: folder creation, upload, duplicate naming, file rename, folder rename, NFC names, complete listing (ids == readable), byte-for-byte downloads with mode 0644, nested folders, recursive download, cancelled-upload cleanup, and verified recursive deletion.")
     }
 
@@ -143,10 +159,28 @@ enum SmokeTest {
             try Data(repeating: 42, count: index == 2 ? 0 : 100).write(to: url)
             urls.append(url)
         }
-        _ = try DeviceOps.upload(urls, storage: storage, parent: parent, status: status, on: t)
+        // One file at a time, so a failure names the file; keep going so one run shows
+        // every type the Kindle refuses in documents/.
+        var failed: [String] = []
+        func send(_ url: URL, to folder: UInt32, label: String) {
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            let start = Date()
+            do {
+                let summary = try DeviceOps.upload([url], storage: storage, parent: folder, status: status, on: t)
+                let took = String(format: "%.1f", Date().timeIntervalSince(start))
+                if summary.uploaded == 1 { print("documents upload OK (\(took) s): \(label) (\(size) bytes)") }
+                else { failed.append(label); print("documents upload SKIPPED (\(took) s): \(label): \(summary.skipped.joined(separator: "; "))") }
+            } catch {
+                let took = String(format: "%.1f", Date().timeIntervalSince(start))
+                failed.append(label)
+                print("documents upload FAILED (\(took) s): \(label) (\(size) bytes): \(error.localizedDescription)")
+            }
+        }
+        for url in urls { send(url, to: parent, label: "documents/\(url.lastPathComponent)") }
         let folderID = try DeviceOps.createFolder(folderName, storage: storage, parent: parent, on: t)
         let nested = try DeviceOps.createFolder("Nested", storage: storage, parent: folderID, on: t)
-        _ = try DeviceOps.upload([urls[0]], storage: storage, parent: nested, status: status, on: t)
+        send(urls[0], to: nested, label: "documents/\(folderName)/Nested/\(urls[0].lastPathComponent)")
+        if !failed.isEmpty { throw DriveError(message: "Uploads into documents/ failed: \(failed.joined(separator: ", ")).") }
         let created = try t.list(storage: storage, parent: parent).entries.filter { fixtures.contains($0.name) }
         try check(created.count == fixtures.count, "Documents fixtures are missing.")
         let outcome = DeviceOps.delete(created, storage: storage, parent: parent, status: status, on: t)

@@ -28,6 +28,7 @@
 - `scripts/test.sh`, unit tests against a fake device, and a GitHub Actions workflow.
 - The Kindle's USB ID is logged in Activity on connect; `--probe` prints more detail and `--dump` adds libmtp's device report.
 - Sleep is prevented while a transfer runs.
+- `--smoke-test` checks that the Kindle still accepts new items after a cancelled upload; `--documents` runs first and reports each upload by name.
 - README, CHANGELOG and a `LICENSE` file.
 
 ### Not validated on hardware
