@@ -36,6 +36,10 @@ final class FakeTransport: Transport {
     var failNextListing = false                          // next childIDs/list throws a transport error
     var delay: TimeInterval = 0                          // per call
     var deleteHook: ((UInt32) -> Void)?                  // called before each delete
+    // Demo only: simulated time per file sent or received, and that file's progress
+    // (the real progress lives in the C shim, which the fake cannot drive).
+    var transferTime: TimeInterval = 0
+    let progress = DemoProgress()
 
     // Call records.
     private(set) var listCalls: [UInt32] = []            // parents passed to list()
@@ -77,6 +81,16 @@ final class FakeTransport: Transport {
     private func insert(_ node: Node) -> UInt32 { nodes[node.id] = node; order.append(node.id); return node.id }
     private func remove(_ id: UInt32) { nodes[id] = nil; order.removeAll { $0 == id } }
     private func pause() { if delay > 0 { Thread.sleep(forTimeInterval: delay) } }
+    /// Demo only: moves `progress` over `transferTime`, stopping early on cancel.
+    private func simulateTransfer() {
+        guard transferTime > 0 else { return }
+        progress.value = 0
+        for step in 1...20 {
+            if kd_cancelled() != 0 { return }
+            Thread.sleep(forTimeInterval: transferTime / 20)
+            progress.value = Double(step) / 20
+        }
+    }
     private func fail(_ message: String, transport: Bool = false) -> DriveError {
         failure = DriveError(message: message, isTransport: transport); return failure
     }
@@ -133,6 +147,7 @@ final class FakeTransport: Transport {
         guard UInt64(data.count) <= capacity - min(capacity, used) else { return rejected("The Kindle is full.") }
         // The object exists from here on; a failure or cancel leaves a partial copy behind.
         let id = addFile(name, parent: parent, data: data.prefix(data.count / 2))
+        simulateTransfer()
         if case .midData? = sendFailure?(name) {
             _ = fail("PTP Layer error 02ff: Could not send object.", transport: true)
             return SendResult(status: -1, itemID: id, dataPhase: true)
@@ -147,6 +162,7 @@ final class FakeTransport: Transport {
     func receive(id: UInt32, toPath: String) throws {
         pause()
         guard let node = nodes[id], !node.folder else { throw fail("The file no longer exists.") }
+        simulateTransfer()
         if kd_cancelled() != 0 { throw fail("Cancelled transfer.") }
         // libmtp creates downloads with mode 0740.
         guard FileManager.default.createFile(atPath: toPath, contents: node.data, attributes: [.posixPermissions: 0o740]) else {
@@ -170,5 +186,15 @@ final class FakeTransport: Transport {
         remove(id)
         if recreateAfterDelete.contains(id) { _ = insert(Node(id: newID(), name: node.name, parent: node.parent, folder: node.folder)) }
         if deleteErrorsButRemoves.contains(id) { throw fail("The Kindle reported an error.") }
+    }
+}
+
+/// Demo only: a fraction written on the USB queue and read by the UI.
+final class DemoProgress: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fraction = 0.0
+    var value: Double {
+        get { lock.lock(); defer { lock.unlock() }; return fraction }
+        set { lock.lock(); fraction = newValue; lock.unlock() }
     }
 }
