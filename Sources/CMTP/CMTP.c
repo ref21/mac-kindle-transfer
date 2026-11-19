@@ -84,7 +84,7 @@ int kd_connect(void) {
         return KD_CONNECT_NO_DEVICE;
     }
     if (!device) {
-        strlcpy(message, "A Kindle was found but could not be opened. Quit other apps that may be using it (Send to Kindle, Calibre, OpenMTP, Android File Transfer, Preview, Image Capture) and try again. If it still fails, quit and reopen Kindle Drive.", sizeof message);
+        strlcpy(message, "A Kindle was found but could not be opened. Quit other apps that may be using it (Send to Kindle, Calibre, OpenMTP, Android File Transfer, Preview, Image Capture) and try again. If it still fails, unplug and replug the Kindle, then quit and reopen Kindle Drive.", sizeof message);
         return KD_CONNECT_BUSY;
     }
     // LIBMTP_Get_Storage returns 1 (not an error) on devices without GetStorageInfo.

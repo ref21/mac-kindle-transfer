@@ -7,6 +7,9 @@
 - Finder files dropped onto a folder in the list, a breadcrumb or a sidebar shortcut are copied into that folder.
 - `--probe` prints whether the Kindle supports moving; `--smoke-test` moves a file and a folder with contents into a folder and back, and a file to the top level and back.
 
+### Fixed
+- Kindle Drive no longer crashes while connecting if the Kindle refuses the first connection, for example after a cancelled copy has left it stuck. libmtp then resets the Kindle's USB, the Kindle treats the reset as an eject and drops off USB, and libmtp went on using the lost connection. It now shows "could not be opened" with advice to unplug and replug the Kindle.
+
 ### Not validated on hardware
 Moving was checked only against the fake device. The drag and drop routing was checked in a separate test harness, not in the app with real mouse drags or on a real Kindle.
 
