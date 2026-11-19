@@ -2,6 +2,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
+INSTALL=0
+for arg in "$@"; do
+  case "$arg" in
+    --install) INSTALL=1 ;;
+    *) echo "Usage: $0 [--install]" >&2; exit 2 ;;
+  esac
+done
+INSTALL_DIR="/Applications"
+if [ "$INSTALL" = 1 ] && pgrep -x KindleDrive >/dev/null; then
+  echo "Kindle Drive is running. Quit it before installing." >&2
+  exit 1
+fi
 USB_PREFIX="$(brew --prefix libusb)"
 export MACOSX_DEPLOYMENT_TARGET=15.0
 export CLANG_MODULE_CACHE_PATH="$ROOT/.build/ModuleCache"
@@ -30,6 +42,7 @@ install_name_tool -id @rpath/libusb-1.0.0.dylib "$APP/Contents/Frameworks/libusb
 cp Vendor/libmtp-1.1.22/COPYING "$APP/Contents/Resources/Licenses/libmtp-LGPL.txt"
 cp "$USB_PREFIX/COPYING" "$APP/Contents/Resources/Licenses/libusb-LGPL.txt"
 cp THIRD_PARTY.md "$APP/Contents/Resources/"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -38,6 +51,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIdentifier</key><string>local.kindledrive.app</string>
 <key>CFBundleName</key><string>Kindle Drive</string>
 <key>CFBundleDisplayName</key><string>Kindle Drive</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundleVersion</key><string>2</string>
 <key>CFBundleShortVersionString</key><string>1.1</string>
 <key>CFBundlePackageType</key><string>APPL</string>
@@ -51,3 +65,15 @@ codesign --force --sign - "$APP/Contents/Frameworks/libusb-1.0.0.dylib"
 codesign --force --sign - "$APP/Contents/Frameworks/libmtp.9.dylib"
 codesign --force --sign - "$APP"
 echo "Built: $APP"
+if [ "$INSTALL" = 1 ]; then
+  DEST="$INSTALL_DIR/Kindle Drive.app"
+  STAGE="$INSTALL_DIR/.Kindle Drive.app.installing"
+  rm -rf "$STAGE"
+  ditto "$APP" "$STAGE"
+  rm -rf "$DEST"
+  mv "$STAGE" "$DEST"
+  # Make Finder and the Dock pick up the new icon and bundle contents.
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST"
+  touch "$DEST"
+  echo "Installed: $DEST"
+fi
