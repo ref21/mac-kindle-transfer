@@ -57,7 +57,12 @@ export SWIFTPM_MODULECACHE_OVERRIDE="$ROOT/.build/ModuleCache"
 if [ "$REBUILD_DEPS" = 1 ]; then
   rm -rf Vendor/installed
   # Removes only git-ignored build products inside the vendored libmtp tree.
-  git clean -fdXq Vendor/libmtp-1.1.22
+  # (Skipped for a source download without .git; configure/make then rebuild in place.)
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    git clean -fdXq Vendor/libmtp-1.1.22
+  elif [ -f Vendor/libmtp-1.1.22/Makefile ]; then
+    make -C Vendor/libmtp-1.1.22 clean >/dev/null
+  fi
 fi
 if [ ! -f Vendor/installed/lib/libmtp.9.dylib ]; then
   cd Vendor/libmtp-1.1.22
