@@ -78,14 +78,27 @@ import CMTP
         model.whenIdle { [weak self] in self?.replyToQuit() }
         // A default-mode Timer does not fire while termination is pending; this does.
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
-            MainActor.assumeIsolated { self?.replyToQuit() }
+            MainActor.assumeIsolated { self?.replyToQuit(timedOut: true) }
         }
         return .terminateLater
     }
     /// Safe to call more than once; only the first call while a quit is pending replies.
-    private func replyToQuit() {
+    /// Shows anything the user must act on first: the app's own alert would never appear
+    /// because the app quits right after this reply.
+    private func replyToQuit(timedOut: Bool = false) {
         guard quitPending else { return }
         quitPending = false
+        var warning = model?.error
+        if timedOut, model?.busy == true {
+            warning = "The operation did not stop in time. If a file was being copied, an incomplete copy may remain on the Kindle. Check the folder after reconnecting."
+        }
+        if let warning {
+            let alert = NSAlert(); alert.alertStyle = .warning
+            alert.messageText = "Before Kindle Drive quits"
+            alert.informativeText = warning
+            alert.addButton(withTitle: "Quit")
+            alert.runModal()
+        }
         NSApp.reply(toApplicationShouldTerminate: true)
     }
 }

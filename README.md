@@ -78,7 +78,7 @@ If you add `.epub` files, the app notes that the Kindle's built-in reader genera
 
 Put books in the `documents` folder. Files at the top level of the storage generally do not show up in the library.
 
-If you quit or close the window while a copy or delete is running, the app asks before stopping it.
+If you quit while a copy or delete is running, the app asks whether to stop it first. Closing the window does not stop it: the operation keeps running, and clicking the Dock icon brings the window back.
 
 ## Troubleshooting
 
@@ -125,11 +125,7 @@ Build options:
 - `./scripts/build.sh --rebuild-deps` discards the libmtp build and builds it again.
 - `./scripts/build.sh --help` prints usage.
 
-To rebuild libmtp by hand, remove the old build and run the build script again:
-
-```
-rm -rf Vendor/installed
-```
+To rebuild libmtp from scratch (for example after changing its build settings), use `--rebuild-deps`. Deleting `Vendor/installed` alone is not enough, because old object files in the libmtp tree would be reused.
 
 Command-line flags of the built executable, `dist/Kindle Drive.app/Contents/MacOS/KindleDrive`:
 

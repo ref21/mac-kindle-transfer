@@ -275,6 +275,9 @@ enum DeviceOps {
             for attempt in 0..<3 {
                 if attempt > 0 { Thread.sleep(forTimeInterval: cleanupRetryDelay) }
                 if (try? t.delete(id: id)) != nil { return nil }
+                // A Kindle that stopped responding will not answer a retry either: each try
+                // would only wait out USB timeouts.
+                if t.lastFailure().isTransport && !t.isAlive() { return mayRemain }
                 // The delete reported an error; it still counts if the object is gone.
                 if let ids = try? t.childIDs(storage: storage, parent: parent), !ids.contains(id) { return nil }
             }

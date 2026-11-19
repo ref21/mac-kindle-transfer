@@ -179,6 +179,7 @@ final class FakeTransport: Transport {
         pause()
         deleteHook?(id)
         deleteCalls.append(id)
+        guard alive else { throw fail("The demo Kindle is not responding.", transport: true) }
         if deleteFails.contains(id) || deleteFailsOnce.remove(id) != nil { throw fail("The Kindle refused to delete the item.") }
         guard let node = nodes[id] else { throw fail("The item no longer exists.") }
         guard children(of: id).isEmpty else { throw fail("The folder is not empty.") }

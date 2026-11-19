@@ -69,7 +69,7 @@ int kd_connect(void) {
     }
     free(raw);
     if (!device && !kindles) {
-        strlcpy(message, "No Kindle was detected. Use a data-capable USB cable, wake the Kindle, and make sure it shows that it is connected for file transfer.", sizeof message);
+        strlcpy(message, "No Kindle was detected. Use a data-capable USB cable, wake the Kindle, and make sure it shows that it is connected for file transfer. If Send to Kindle, Calibre or another MTP app is open, quit it and try again.", sizeof message);
         return KD_CONNECT_NO_DEVICE;
     }
     if (!device) {

@@ -132,6 +132,13 @@ final class UploadTests: DeviceOpsTestCase {
         }
         XCTAssertEqual(names(), [])
     }
+    func testCleanupStopsRetryingWhenTheKindleStoppedResponding() throws {
+        t.sendFailure = { _ in self.t.alive = false; return .midData }   // the Kindle dies during the send
+        XCTAssertThrowsError(try DeviceOps.upload([try localFile("A.epub")], storage: storage, parent: 0, status: status, on: t)) {
+            XCTAssertTrue(self.message($0).contains("An incomplete copy of ‘A.epub’ may remain"), self.message($0))
+        }
+        XCTAssertEqual(t.deleteCalls.count, 1)   // no retries against a dead device
+    }
     func testCleanupRetriesAndReportsACopyThatCannotBeRemoved() throws {
         t.sendFailure = { _ in .midData }
         // First attempt fails, second succeeds.
