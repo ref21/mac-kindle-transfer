@@ -34,6 +34,8 @@ protocol Transport: AnyObject {
     func receive(id: UInt32, toPath: String) throws
     func rename(id: UInt32, to name: String) throws
     func delete(id: UInt32) throws
+    func canMove() -> Bool                             // device advertises MTP MoveObject
+    func move(id: UInt32, storage: UInt32, parent: UInt32) throws   // parent 0 = storage root
     func lastFailure() -> DriveError                   // why the last failed call failed
 }
 
@@ -148,5 +150,17 @@ final class MTPTransport: Transport {
         guard id != 0, id != UInt32.max else { throw DriveError(message: "That item cannot be deleted.") }
         let d = try device(); LIBMTP_Clear_Errorstack(d)
         guard LIBMTP_Delete_Object(d, id) == 0 else { throw lastFailure() }
+    }
+    /// Reads the capability from the device information; no USB traffic.
+    func canMove() -> Bool {
+        guard let d = kd_device() else { return false }
+        return LIBMTP_Check_Capability(d, LIBMTP_DEVICECAP_MoveObject) != 0
+    }
+    /// The only place in the app that moves an object on the Kindle.
+    func move(id: UInt32, storage: UInt32, parent: UInt32) throws {
+        guard id != 0, id != UInt32.max else { throw DriveError(message: "That item cannot be moved.") }
+        let d = try device(); LIBMTP_Clear_Errorstack(d)
+        // Unlike kd_upload, MoveObject takes the storage root as 0 (libmtp.c): pass `parent` unchanged.
+        guard LIBMTP_Move_Object(d, id, storage, parent) == 0 else { throw lastFailure() }
     }
 }

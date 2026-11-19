@@ -47,6 +47,12 @@ struct DeleteOutcome: Sendable {
     var failure: Error?          // why the batch stopped or could not be confirmed
 }
 
+struct MoveOutcome: Sendable {
+    var moved: [Entry] = []      // confirmed by fresh listings of the source and destination
+    var skipped: [String] = []   // "name — reason", items not attempted
+    var failure: Error?          // why the batch stopped or could not be confirmed
+}
+
 /// What the worker is doing right now. Written by the worker, read by the UI.
 final class TransferStatus: @unchecked Sendable {
     struct Snapshot: Sendable, Equatable { var name = ""; var index = 0; var total = 0 }
@@ -102,6 +108,12 @@ final class Device: @unchecked Sendable {
     func delete(_ entries: [Entry], storage: UInt32, parent: UInt32, status: TransferStatus) async -> DeleteOutcome {
         do { return try await run { DeviceOps.delete(entries, storage: storage, parent: parent, status: status, on: $0) } }
         catch { return DeleteOutcome(failure: error) }   // unreachable: the work does not throw
+    }
+
+    /// `entries` must be siblings inside `parent`. Never throws: see `MoveOutcome`.
+    func move(_ entries: [Entry], storage: UInt32, from parent: UInt32, to destination: UInt32, status: TransferStatus) async -> MoveOutcome {
+        do { return try await run { DeviceOps.move(entries, storage: storage, from: parent, to: destination, status: status, on: $0) } }
+        catch { return MoveOutcome(failure: error) }   // unreachable: the work does not throw
     }
 
     // MARK: Pure helpers
@@ -393,6 +405,60 @@ enum DeviceOps {
         let left = try t.childIDs(storage: storage, parent: id)
         guard left.isEmpty else { throw DriveError(message: "‘\(name)’ still contains \(left.count) item(s). Refresh and try again.") }
     }
+    // MARK: Move
+
+    /// Moves `entries` (siblings inside `parent`) into `destination`, stops at the first
+    /// error or cancel (checked between items: one MoveObject is atomic), and always
+    /// finishes with fresh listings of both folders to confirm what moved. Names already
+    /// taken in the destination are skipped, never overwritten or renamed.
+    static func move(_ entries: [Entry], storage: UInt32, from parent: UInt32, to destination: UInt32,
+                     status: TransferStatus, on t: Transport) -> MoveOutcome {
+        var outcome = MoveOutcome()
+        status.begin(total: entries.count)
+        guard t.canMove() else {
+            outcome.failure = DriveError(message: "This Kindle does not support moving items. To move them, save them to your Mac, add them to the other folder, then delete the originals.")
+            return outcome
+        }
+        guard destination != parent else { return outcome }
+        var names: Set<String>
+        do { names = Set(try t.list(storage: storage, parent: destination).entries.map { $0.name.lowercased() }) }
+        catch { outcome.failure = error; return outcome }
+        var issued: [Entry] = []
+        var failure: Error?
+        for (index, entry) in entries.enumerated() {
+            if kd_cancelled() != 0 { failure = Cancelled(); break }
+            status.set(name: entry.name, index: index + 1)
+            if entry.id == destination { continue }   // a folder dropped onto itself within a multi-selection
+            if names.contains(entry.name.lowercased()) {
+                outcome.skipped.append("\(entry.name) — an item with this name is already in the destination folder")
+                continue
+            }
+            do { try t.move(id: entry.id, storage: storage, parent: destination) }
+            catch { failure = error; break }
+            names.insert(entry.name.lowercased())
+            issued.append(entry)
+        }
+        do {
+            let sourceIDs = Set(try t.childIDs(storage: storage, parent: parent))
+            let target = try t.list(storage: storage, parent: destination)
+            let targetIDs = Set(target.ids), targetNames = Set(target.entries.map(\.name))
+            for entry in issued {
+                // The device may give a moved object a new handle, so the exact name also counts.
+                if !sourceIDs.contains(entry.id) && (targetIDs.contains(entry.id) || targetNames.contains(entry.name)) {
+                    outcome.moved.append(entry)
+                } else {
+                    failure = combine(failure, "The Kindle did not confirm that ‘\(entry.name)’ was moved. Refresh to see where it is.", transport: false)
+                }
+            }
+        } catch {
+            outcome.moved = []
+            failure = combine(failure, "The move could not be confirmed because a folder could not be read. Refresh to see where items are.",
+                              transport: (error as? DriveError)?.isTransport ?? false)
+        }
+        outcome.failure = failure
+        return outcome
+    }
+
     /// Adds `text` to an earlier failure, keeping `Cancelled` recognisable as such.
     private static func combine(_ earlier: Error?, _ text: String, transport: Bool) -> Error {
         switch earlier {

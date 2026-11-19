@@ -35,8 +35,12 @@ final class FakeTransport: Transport {
     var deleteSilentlyKeeps = Set<UInt32>()              // delete reports success, object stays
     var recreateAfterDelete = Set<UInt32>()              // a same-named object with a new id appears
     var failNextListing = false                          // next childIDs/list throws a transport error
+    var supportsMove = true                              // the device advertises MoveObject
+    var moveFails = Set<UInt32>()                        // move reports an error, object stays
+    var moveSilentlyKeeps = Set<UInt32>()                // move reports success, object stays
     var delay: TimeInterval = 0                          // per call
     var deleteHook: ((UInt32) -> Void)?                  // called before each delete
+    var moveHook: ((UInt32) -> Void)?                    // called before each move
     // Demo only: simulated time per file sent or received, and that file's progress
     // (the real progress lives in the C shim, which the fake cannot drive).
     var transferTime: TimeInterval = 0
@@ -46,6 +50,7 @@ final class FakeTransport: Transport {
     private(set) var listCalls: [UInt32] = []            // parents passed to list()
     private(set) var childIDCalls: [UInt32] = []         // parents passed to childIDs() directly
     private(set) var deleteCalls: [UInt32] = []
+    private(set) var moveCalls: [UInt32] = []
     private(set) var lookupCalls: [UInt32] = []
 
     // MARK: Building the tree
@@ -194,6 +199,26 @@ final class FakeTransport: Transport {
         remove(id)
         if recreateAfterDelete.contains(id) { _ = insert(Node(id: newID(), name: node.name, parent: node.parent, folder: node.folder)) }
         if deleteErrorsButRemoves.contains(id) { throw fail("The Kindle reported an error.") }
+    }
+    func canMove() -> Bool { supportsMove }
+    func move(id: UInt32, storage: UInt32, parent: UInt32) throws {
+        pause()
+        moveHook?(id)
+        moveCalls.append(id)
+        guard alive else { throw fail("The demo Kindle is not responding.", transport: true) }
+        guard supportsMove else { throw fail("Operation not supported") }
+        if moveFails.contains(id) { throw fail("The Kindle refused to move the item.") }
+        guard let node = nodes[id] else { throw fail("The item no longer exists.") }
+        guard parent == 0 || nodes[parent]?.folder == true else { throw fail("The destination folder no longer exists.") }
+        // Walk up from the destination: reaching `id` means it is inside the moved folder.
+        var cursor = parent
+        while cursor != 0 {
+            if cursor == id { throw fail("A folder cannot be moved into itself.") }
+            cursor = nodes[cursor]?.parent ?? 0
+        }
+        guard !taken(node.name, in: parent) else { throw fail("An item with that name already exists.") }
+        if moveSilentlyKeeps.contains(id) { return }
+        nodes[id]?.parent = parent
     }
 }
 

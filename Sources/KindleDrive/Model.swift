@@ -2,10 +2,14 @@ import SwiftUI
 import AppKit
 import CMTP
 
+/// A folder on the current storage that items can be moved or copied into. `id` 0 = root;
+/// `names` = folder names from the root (for labels and Activity).
+struct FolderRef: Equatable, Sendable { let id: UInt32; let names: [String] }
+
 /// Progress of the running copy or delete. Kept out of `BrowserModel` so that only the
 /// status bar re-renders while it changes; values are assigned only when they change.
 @MainActor final class TransferMonitor: ObservableObject {
-    enum Mode: Equatable { case idle, copying, deleting }
+    enum Mode: Equatable { case idle, copying, deleting, moving }
     @Published private(set) var mode = Mode.idle
     @Published private(set) var progress: Double = 0     // current file, 0…1 (copies only)
     @Published private(set) var item = ""                // e.g. "Copying ‘Book.azw3’ (3 of 20)"
@@ -30,7 +34,8 @@ import CMTP
     private func tick() {
         guard let status else { return }
         let s = status.snapshot
-        let text = s.index == 0 ? "" : "\(mode == .deleting ? "Deleting" : "Copying") ‘\(s.name)’ (\(s.index) of \(s.total))"
+        let verb = mode == .deleting ? "Deleting" : mode == .moving ? "Moving" : "Copying"
+        let text = s.index == 0 ? "" : "\(verb) ‘\(s.name)’ (\(s.index) of \(s.total))"
         if text != item { item = text }
         guard mode == .copying else { return }
         let fraction = (min(max(readProgress(), 0), 1) * 100).rounded() / 100
@@ -46,7 +51,7 @@ final class OperationContext {
 }
 
 @MainActor final class BrowserModel: ObservableObject {
-    enum Kind { case plain, copy, delete }
+    enum Kind { case plain, copy, delete, move }
     static let noKindleStatus = "No Kindle found. Connect it by USB, then click Connect Kindle."
     static let disconnectedStatus = "The Kindle was disconnected."
     static let epubNote = "Note: the Kindle's built-in reader can't open .epub files copied by USB. Convert them (for example to AZW3 or KFX) or use Send to Kindle; reader apps such as KOReader can open them."
@@ -113,7 +118,18 @@ final class OperationContext {
     func selectAll() { selection = Set(visible.map(\.id)) }
     func trimSelection() { selection.formIntersection(Set(visible.map(\.id))) }
     var storage: Storage? { connection?.storages.first { $0.id == storageID } }
-    var location: String { "/" + path.map(\.name).joined(separator: "/") }
+    var location: String { Self.display(currentFolder) }
+    var currentFolder: FolderRef { FolderRef(id: parent, names: path.map(\.name)) }
+    /// A folder in the open folder.
+    func folderRef(child folder: Entry) -> FolderRef { FolderRef(id: folder.id, names: path.map(\.name) + [folder.name]) }
+    /// A breadcrumb segment: depth 0 = the root, `path.count` = the open folder.
+    func folderRef(depth: Int) -> FolderRef {
+        let prefix = Array(path.prefix(depth))
+        return FolderRef(id: prefix.last?.id ?? 0, names: prefix.map(\.name))
+    }
+    /// A folder at the root (a sidebar shortcut).
+    func folderRef(shortcut folder: Entry) -> FolderRef { FolderRef(id: folder.id, names: [folder.name]) }
+    nonisolated static func display(_ f: FolderRef) -> String { "/" + f.names.joined(separator: "/") }
     nonisolated static func itemPath(_ folders: [String], _ name: String) -> String { "/" + (folders + [name]).joined(separator: "/") }
 
     func record(_ line: String) {
@@ -133,6 +149,7 @@ final class OperationContext {
         switch kind {
         case .copy: monitor.start(.copying, status: context.status)
         case .delete: monitor.start(.deleting, status: context.status)
+        case .move: monitor.start(.moving, status: context.status)
         case .plain: break
         }
         let activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: label)
@@ -149,7 +166,8 @@ final class OperationContext {
                 record(status)
             } catch let cancelled as Cancelled {
                 status = "\(label) — cancelled"
-                let wording = kind == .delete ? "Stopped. Items already deleted stay deleted." : "Stopped. Files already copied were kept."
+                let wording = kind == .delete ? "Stopped. Items already deleted stay deleted."
+                            : kind == .move ? "Stopped. Items already moved stay moved." : "Stopped. Files already copied were kept."
                 record([status + ".", wording, context.cancelNote, cancelled.note].compactMap { $0 }.joined(separator: " "))
                 if cancelled.duringUpload { cancelledMidUpload = true; record(Self.afterCancelWarning) }
                 // Alert only when the user must act on something: an incomplete copy that
@@ -270,11 +288,13 @@ final class OperationContext {
         panel.prompt = "Add to Kindle"
         if panel.runModal() == .OK { upload(panel.urls) }
     }
-    func upload(_ urls: [URL]) {
+    /// `destination` nil = the open folder.
+    func upload(_ urls: [URL], to destination: FolderRef? = nil) {
         guard connection != nil, !urls.isEmpty else { return }
-        perform("Adding \(urls.count) item(s) to \(location)", kind: .copy, creates: true) { context in
+        let target = destination ?? currentFolder
+        perform("Adding \(urls.count) item(s) to \(Self.display(target))", kind: .copy, creates: true) { context in
             let summary: UploadSummary
-            do { summary = try await self.device.upload(urls, storage: self.storageID, parent: self.parent, status: context.status) }
+            do { summary = try await self.device.upload(urls, storage: self.storageID, parent: target.id, status: context.status) }
             catch { await self.afterFailure(error); throw error }
             if !summary.skipped.isEmpty {
                 context.doneNote = "\(summary.skipped.count) skipped"
@@ -298,6 +318,28 @@ final class OperationContext {
             for case let child as URL in walk where isEPUB(child) { return true }
         }
         return false
+    }
+    /// Moves items of the open folder (`ids`; others are ignored) into `destination`.
+    func move(_ ids: [UInt32], to destination: FolderRef) {
+        guard connection != nil, !busy else { return }
+        let entries = files.filter { ids.contains($0.id) && $0.id != destination.id }
+        guard !entries.isEmpty, destination.id != parent else { return }
+        let folders = path.map(\.name), source = parent
+        perform("Moving \(entries.count) item(s) to \(Self.display(destination))", kind: .move) { context in
+            let outcome = await self.device.move(entries, storage: self.storageID, from: source, to: destination.id, status: context.status)
+            let time = Date().formatted(date: .omitted, time: .standard)
+            for entry in outcome.moved { self.record("\(time) Moved: \(Self.itemPath(folders, entry.name)) → \(Self.display(destination))") }
+            for item in outcome.skipped { self.record("Skipped: \(item)") }
+            if !outcome.skipped.isEmpty { context.doneNote = "\(outcome.skipped.count) skipped" }
+            if let failure = outcome.failure {
+                await self.afterFailure(failure)
+                throw failure
+            }
+            if outcome.moved.isEmpty, !outcome.skipped.isEmpty {
+                self.error = "Nothing was moved.\n\n" + outcome.skipped.joined(separator: "\n")
+            }
+            try await self.afterChange()
+        }
     }
     func download() {
         let entries = chosen; guard !busy, !entries.isEmpty else { return }

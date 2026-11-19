@@ -14,6 +14,7 @@ enum SmokeTest {
             guard let storage = storages.first?.id else { throw DriveError(message: "The Kindle reported no storage.") }
             print("Connected: \(model) — \(t.deviceInfo())")
             for s in storages { print("storage\t\(s.name)\t\(s.free) of \(s.capacity) bytes free") }
+            print(t.canMove() ? "move\tsupported" : "move\tnot supported (MTP MoveObject missing)")
             let root = try t.list(storage: storage, parent: 0)
             print("Root: \(root.ids.count) ids / \(root.entries.count) readable")
             for e in root.entries { print("\(e.folder ? "folder" : "file")\t\(e.name)") }
@@ -99,6 +100,29 @@ enum SmokeTest {
         try DeviceOps.download([testFolder], storage: storage, into: dest, status: status, on: t)
         try check(fm.contents(atPath: dest.appendingPathComponent(name).appendingPathComponent("Nested Renamed/sample.txt").path) == payload, "Recursive download failed")
 
+        // Move a file into a subfolder and back (before the cancel step, which can stop the
+        // Kindle accepting new objects).
+        let canMove = t.canMove()
+        if canMove {
+            func entry(_ name: String, in folder: UInt32) throws -> Entry {
+                guard let e = try t.list(storage: storage, parent: folder).entries.first(where: { $0.name == name }) else {
+                    throw DriveError(message: "‘\(name)’ is missing after a move.")
+                }
+                return e
+            }
+            func has(_ name: String, in folder: UInt32) throws -> Bool {
+                try t.list(storage: storage, parent: folder).entries.contains { $0.name == name }
+            }
+            for (from, to, label) in [(id, nestedID, "into a subfolder"), (nestedID, id, "back")] {
+                let outcome = DeviceOps.move([try entry("renamed.txt", in: from)], storage: storage, from: from, to: to, status: status, on: t)
+                try check(outcome.failure == nil && outcome.moved.count == 1, "Move \(label) failed: \(outcome.failure?.localizedDescription ?? "not confirmed")")
+                try check(try has("renamed.txt", in: to) && !(try has("renamed.txt", in: from)), "Move \(label) left the file in the wrong folder")
+            }
+            print("move\tOK")
+        } else {
+            print("SKIP move: this Kindle does not support MTP MoveObject")
+        }
+
         // Cancel in the middle of an upload: the incomplete copy must be removed.
         let big = local.appendingPathComponent("cancel-me.bin")
         try Data(count: 5 * 1024 * 1024).write(to: big)
@@ -131,7 +155,7 @@ enum SmokeTest {
         let probe = Entry(id: probeID, name: probeName, size: 0, modified: Date(), folder: true)
         let cleanup = DeviceOps.delete([probe], storage: storage, parent: 0, status: status, on: t)
         if let failure = cleanup.failure { throw failure }
-        print("PASS: folder creation, upload, duplicate naming, file rename, folder rename, NFC names, complete listing (ids == readable), byte-for-byte downloads with mode 0644, nested folders, recursive download, cancelled-upload cleanup, and verified recursive deletion.")
+        print("PASS: folder creation, upload, duplicate naming, file rename, folder rename, NFC names, complete listing (ids == readable), byte-for-byte downloads with mode 0644, nested folders, recursive download, \(canMove ? "move there and back" : "(move skipped: not supported)"), cancelled-upload cleanup, and verified recursive deletion.")
     }
 
     /// Opt-in (`--smoke-test --documents`): deletion inside the real documents folder,
