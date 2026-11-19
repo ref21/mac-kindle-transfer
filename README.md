@@ -103,7 +103,7 @@ If you quit while a copy, delete or move is running, the app asks whether to sto
 - Apple Silicon only. macOS 14 has only been compile-checked.
 - The app reaches only the storage the Kindle exposes over USB.
 - Deleting is permanent. There is no trash.
-- Moving depends on the Kindle supporting MTP's MoveObject; `--probe` prints whether it does. Moving has not been tested on hardware. Items cannot be dragged out to Finder; use Save to Mac.
+- Moving depends on the Kindle supporting MTP's MoveObject; `--probe` prints whether it does. A Kindle Paperwhite supports it; moving by mouse has not yet been tried on a Kindle. Items cannot be dragged out to Finder; use Save to Mac.
 - Moving needs the built app (`dist/Kindle Drive.app`). With `swift run`, dropped Kindle items do nothing.
 - Closing the window during a transfer keeps the app running until it ends; clicking the Dock icon reopens the window.
 
@@ -145,7 +145,7 @@ swift scripts/make-icon.swift
 
 ## Testing status
 
-The app was exercised on one Kindle Paperwhite before release: listing, new folders, upload, duplicate names, rename, download, nested folders and deletion. Later changes to the device layer and the interface (including cancel and disconnect handling) have been checked by automated tests that run against a fake device, and by launching the app in demo mode. On a Kindle Paperwhite, `--probe` passes with the current code, and `--smoke-test` passes every step up to its last one: listing, upload, rename, download, cleanup after a cancelled upload, and verified deletion. Its last step then fails because of the cancel problem described under Known limitations. The interface itself has not yet been run against a real Kindle. Moving items and dropping onto folders are covered only by automated tests against the fake device and an off-screen drag-and-drop harness; they have not yet been tried in the app (not even in demo mode) or on a Kindle. See Known limitations for what is untested.
+The app was exercised on one Kindle Paperwhite before release: listing, new folders, upload, duplicate names, rename, download, nested folders and deletion. Later changes to the device layer and the interface (including cancel and disconnect handling) have been checked by automated tests that run against a fake device, and by launching the app in demo mode. On a Kindle Paperwhite, `--probe` passes with the current code, and `--smoke-test` passes every step up to its last one: listing, upload, rename, download, cleanup after a cancelled upload, and verified deletion. Its last step then fails because of the cancel problem described under Known limitations. The interface itself has not yet been run against a real Kindle. Moving items and dropping onto folders were tried by hand in demo mode, and `--smoke-test` moves a file, a folder with contents and a file to the top level and back on a Kindle Paperwhite; moving by mouse in the app has not yet been tried on a Kindle. See Known limitations for what is untested.
 
 ## Licence and third-party software
 

@@ -8,10 +8,10 @@
 - `--probe` prints whether the Kindle supports moving; `--smoke-test` moves a file and a folder with contents into a folder and back, and a file to the top level and back.
 
 ### Fixed
-- Kindle Drive no longer crashes while connecting if the Kindle refuses the first connection, for example after a cancelled copy has left it stuck. libmtp then resets the Kindle's USB, the Kindle treats the reset as an eject and drops off USB, and libmtp went on using the lost connection. It now shows "could not be opened" with advice to unplug and replug the Kindle.
+- Kindle Drive no longer crashes while connecting if the Kindle refuses the first connection; this was seen after a smoke test that had left the Kindle stuck. libmtp then resets the Kindle's USB, the Kindle treats the reset as an eject and drops off USB, and libmtp went on using the lost connection. After about 15 seconds the app now shows "could not be opened" with advice to unplug and replug the Kindle and reopen the app.
 
 ### Not validated on hardware
-Moving was checked only against the fake device. The drag and drop routing was checked in a separate test harness, not in the app with real mouse drags or on a real Kindle.
+Dragging and dropping was tried by hand in demo mode, and the smoke test's moves pass on a Kindle Paperwhite. Moving by mouse in the app has not yet been tried on a Kindle. The connect-crash fix was traced through the libusb source and crash report but not yet reproduced on a Kindle.
 
 ## 1.2 — unreleased
 

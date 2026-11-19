@@ -2310,13 +2310,16 @@ LIBMTP_error_number_t configure_usb_device(LIBMTP_raw_device_t *device,
     LIBMTP_ERROR("PTP_ERROR_IO: failed to open session, trying again after resetting USB interface\n");
     LIBMTP_ERROR("LIBMTP libusb: Attempt to reset device\n");
     /*
-     * Kindle Drive change (2026-11-19): check the reset. If it fails, the device left USB
-     * during the reset (a Kindle treats a reset as an eject) and, with libusb 1.0.29 on
-     * macOS, any transfer on this handle - such as close_usb()'s clear_stall() - reads a
-     * NULL IOKit object and crashes. Only close the handle and report the failure.
+     * Kindle Drive change (2026-11-19): check the reset. A Kindle treats a reset as an
+     * eject and leaves USB; libusb 1.0.29 on macOS then drops the device's IOKit object
+     * and the reset times out. A control transfer on that handle - such as close_usb()'s
+     * clear_stall() - then reads the NULL object and crashes. On any reset failure, only
+     * release the interface, close the handle and report the failure.
      */
-    if (libusb_reset_device (ptp_usb->handle) != LIBUSB_SUCCESS) {
-      LIBMTP_ERROR("LIBMTP PANIC: the device did not come back after the USB reset\n");
+    int reset = libusb_reset_device (ptp_usb->handle);
+    if (reset != LIBUSB_SUCCESS) {
+      LIBMTP_ERROR("LIBMTP PANIC: USB reset failed (%s); not retrying\n", libusb_error_name(reset));
+      libusb_release_interface(ptp_usb->handle, (int) ptp_usb->interface);
       libusb_close(ptp_usb->handle);
       libusb_free_device_list (devs, 0);
       free (ptp_usb);
