@@ -29,7 +29,7 @@ import CMTP
     var location: String { "/" + path.map(\.name).joined(separator: "/") }
     func perform(_ label: String, transfer: Bool = false, _ action: @escaping () async throws -> Void) {
         guard !busy else { return }
-        busy = true; transferring = transfer; status = label; progress = 0; kd_begin()
+        busy = true; transferring = transfer; status = label; progress = 0; kd_reset_transfer()
         if transfer {
             timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.progress = kd_progress() }
@@ -43,7 +43,7 @@ import CMTP
         }
     }
     func reload() async throws {
-        files = try await device.list(storageID, parent)
+        files = try await device.list(storageID, parent).entries
         selection.formIntersection(Set(files.map(\.id)))
     }
     func connect() {
@@ -79,7 +79,7 @@ import CMTP
     }
     func shortcut(_ name: String) {
         perform("Opening \(name)") {
-            let root = try await self.device.list(self.storageID, 0)
+            let root = try await self.device.list(self.storageID, 0).entries
             guard let folder = root.first(where: { $0.folder && $0.name.lowercased() == name.lowercased() }) else { throw DriveError(message: "The \(name) folder is not on this Kindle.") }
             self.path = [folder]; self.search = ""; self.selection = []; try await self.reload()
         }
@@ -93,7 +93,7 @@ import CMTP
     func upload(_ urls: [URL]) {
         guard connection != nil, !urls.isEmpty else { return }
         perform("Adding \(urls.count) item(s) to \(location)", transfer: true) {
-            do { try await self.device.upload(urls, storage: self.storageID, parent: self.parent) }
+            do { _ = try await self.device.upload(urls, storage: self.storageID, parent: self.parent, status: TransferStatus()) }
             catch { try? await self.reload(); throw error }
             try await self.reload()
         }
@@ -104,7 +104,7 @@ import CMTP
         panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.canCreateDirectories = true; panel.prompt = "Save Here"
         guard panel.runModal() == .OK, let directory = panel.url else { return }
         perform("Saving \(entries.count) item(s) to Mac", transfer: true) {
-            try await self.device.download(entries, storage: self.storageID, into: directory)
+            try await self.device.download(entries, storage: self.storageID, into: directory, status: TransferStatus())
             NSWorkspace.shared.open(directory)
         }
     }
@@ -132,11 +132,10 @@ import CMTP
         alert.addButton(withTitle: "Cancel"); alert.addButton(withTitle: "Delete Permanently")
         guard alert.runModal() == .alertSecondButtonReturn else { return }
         perform("Deleting \(entries.count) item(s)", transfer: true) {
-            do { try await self.device.delete(entries, storage: self.storageID)
-                let timestamp = Date().formatted(date: .omitted, time: .standard)
-                for entry in entries { self.history.insert("\(timestamp) Deleted and verified: \(self.location)/\(entry.name)", at: 0) }
-            }
-            catch { try? await self.reload(); throw error }
+            let outcome = await self.device.delete(entries, storage: self.storageID, parent: self.parent, status: TransferStatus())
+            let timestamp = Date().formatted(date: .omitted, time: .standard)
+            for entry in outcome.verified { self.history.insert("\(timestamp) Deleted and verified: \(self.location)/\(entry.name)", at: 0) }
+            if let failure = outcome.failure { try? await self.reload(); throw failure }
             try await self.reload()
         }
     }

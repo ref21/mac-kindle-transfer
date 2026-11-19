@@ -1,84 +1,162 @@
 import Foundation
 import CMTP
 
+/// Hardware checks, run by the owner only: `--probe` is read-only; `--smoke-test` writes
+/// only inside one uniquely named folder at the storage root and removes it afterwards.
+/// Runs synchronously on the calling thread with the same functions the app uses.
 enum SmokeTest {
     static func run(mutate: Bool) -> Never {
+        let t = MTPTransport()
+        let arguments = CommandLine.arguments
         do {
-            guard kd_connect() == 0 else { throw Device.failure() }
-            guard let d = kd_device(), let storage = d.pointee.storage?.pointee.id else { throw Device.failure() }
-            let root = try Device.entries(storage, 0)
-            print("Connected. Root contains \(root.count) items.")
-            for e in root { print("\(e.folder ? "folder" : "file")\t\(e.name)") }
+            let model = try t.open()
+            let storages = try t.storages()
+            guard let storage = storages.first?.id else { throw DriveError(message: "The Kindle reported no storage.") }
+            print("Connected: \(model) — \(t.deviceInfo())")
+            for s in storages { print("storage\t\(s.name)\t\(s.free) of \(s.capacity) bytes free") }
+            let root = try t.list(storage: storage, parent: 0)
+            print("Root: \(root.ids.count) ids / \(root.entries.count) readable")
+            for e in root.entries { print("\(e.folder ? "folder" : "file")\t\(e.name)") }
+            let documents = root.entries.first(where: { $0.folder && $0.name.lowercased() == "documents" })
+            if let documents {
+                let listing = try t.list(storage: storage, parent: documents.id)
+                print("documents: \(listing.ids.count) ids / \(listing.entries.count) readable")
+            }
+            if arguments.contains("--dump") { kd_dump_device_info() }
             if mutate {
-                kd_begin()
-                let name = "KindleDrive-Test-\(UUID().uuidString)"
-                let id = try Device.create(name, storage, 0)
-                let testFolder = Entry(id: id, name: name, size: 0, modified: Date(), folder: true)
-                defer { kd_begin(); try? Device.deleteItem(testFolder, storage: storage) }
-                let local = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-                try FileManager.default.createDirectory(at: local, withIntermediateDirectories: false)
-                defer { try? FileManager.default.removeItem(at: local) }
-                let source = local.appendingPathComponent("sample.txt")
-                let payload = Data("Kindle Drive round-trip verification.\nUnicode: café 日本語 📚\n".utf8)
-                try payload.write(to: source)
-                try Device.uploadItem(source, storage, id)
-                try Device.uploadItem(source, storage, id)
-                var files = try Device.entries(storage, id)
-                guard files.count == 2, Set(files.map(\.name)) == ["sample.txt", "sample (2).txt"] else { throw DriveError(message: "Duplicate-name handling failed") }
-                guard let file = LIBMTP_Get_Filemetadata(d, files[0].id) else { throw Device.failure() }
-                let rename = LIBMTP_Set_File_Name(d, file, "renamed.txt"); LIBMTP_destroy_file_t(file)
-                guard rename == 0 else { throw Device.failure() }
-                files = try Device.entries(storage, id)
-                let dest = local.appendingPathComponent("downloads")
-                try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: false)
-                for entry in files { try Device.downloadItem(entry, storage: storage, into: dest) }
-                for entry in files {
-                    guard try Data(contentsOf: dest.appendingPathComponent(entry.name)) == payload else { throw DriveError(message: "Round-trip contents differ") }
-                }
-                let nested = try Device.create("Nested", storage, id)
-                try Device.uploadItem(source, storage, nested)
-                try Device.downloadItem(testFolder, storage: storage, into: dest)
-                guard try Data(contentsOf: dest.appendingPathComponent(name).appendingPathComponent("Nested/sample.txt")) == payload else { throw DriveError(message: "Recursive download failed") }
-                try Device.deleteItem(testFolder, storage: storage)
-                guard !(try Device.entries(storage, 0)).contains(where: { $0.id == id }) else { throw DriveError(message: "Test folder cleanup failed") }
-                print("PASS: folder creation, upload, duplicate protection, rename, byte-for-byte downloads, nested folders, recursive download, and verified deletion.")
-                if let documents = root.first(where: { $0.folder && $0.name.lowercased() == "documents" }) {
-                    try verifyDocumentsDeletion(storage: storage, parent: documents.id, local: local)
+                try roundTrip(t, storage)
+                if arguments.contains("--documents") {
+                    guard let documents else { throw DriveError(message: "This Kindle has no documents folder.") }
+                    try verifyDocumentsDeletion(t, storage, documents.id)
                 }
             }
-            kd_disconnect(); exit(0)
+            t.close(); exit(0)
         } catch {
-            fputs("ERROR: \(error.localizedDescription)\n", stderr); kd_disconnect(); exit(1)
+            fputs("ERROR: \(error.localizedDescription)\n", stderr); t.close(); exit(1)
         }
     }
-    static func verifyDocumentsDeletion(storage: UInt32, parent: UInt32, local: URL) throws {
-        let token = UUID().uuidString
-        let names = ["KindleDrive-Test-\(token).txt", "KPPMainAppV2_KindleDrive-Test-\(token).tgz", "KindleDrive-Zero-\(token).tgz"]
-        let folderName = "KindleDrive-Folder-Test-\(token)"
-        let fixtures = Set(names + [folderName])
-        defer {
-            kd_begin()
-            if let remaining = try? Device.entries(storage, parent) {
-                for entry in remaining where fixtures.contains(entry.name) { try? Device.deleteItem(entry, storage: storage) }
-            }
+    static func check(_ condition: Bool, _ message: String) throws { if !condition { throw DriveError(message: message) } }
+    static func sameBytes(_ a: String, _ b: String) -> Bool { Array(a.utf8) == Array(b.utf8) }   // String == ignores NFC/NFD
+
+    static func roundTrip(_ t: Transport, _ storage: UInt32) throws {
+        let status = TransferStatus()
+        let fm = FileManager.default
+        kd_reset_transfer()
+        let name = "KindleDrive-Test-\(UUID().uuidString)"
+        let id = try DeviceOps.createFolder(name, storage: storage, parent: 0, on: t)
+        let testFolder = Entry(id: id, name: name, size: 0, modified: Date(), folder: true)
+        var removed = false
+        defer { if !removed { kd_reset_transfer(); _ = DeviceOps.delete([testFolder], storage: storage, parent: 0, status: status, on: t) } }
+        let local = fm.temporaryDirectory.appendingPathComponent(name)
+        try fm.createDirectory(at: local, withIntermediateDirectories: false)
+        defer { try? fm.removeItem(at: local) }
+
+        // Upload and duplicate naming.
+        let source = local.appendingPathComponent("sample.txt")
+        let payload = Data("Kindle Drive round-trip verification.\nUnicode: café 日本語 📚\n".utf8)
+        try payload.write(to: source)
+        for _ in 0..<2 {
+            let summary = try DeviceOps.upload([source], storage: storage, parent: id, status: status, on: t)
+            try check(summary.uploaded == 1 && summary.skipped.isEmpty, "Upload was not reported as copied")
         }
-        for (index, name) in names.enumerated() {
-            let url = local.appendingPathComponent(name)
-            try Data(repeating: 42, count: index == 2 ? 0 : 100).write(to: url)
-            try Device.uploadItem(url, storage, parent)
+        var listing = try t.list(storage: storage, parent: id)
+        try check(listing.entries.count == 2 && Set(listing.entries.map(\.name)) == ["sample.txt", "sample (2).txt"], "Duplicate-name handling failed")
+
+        // Rename a file and a folder through the app's rename.
+        try DeviceOps.rename(listing.entries[0], to: "renamed.txt", storage: storage, parent: id, on: t)
+        let nestedID = try DeviceOps.createFolder("Nested", storage: storage, parent: id, on: t)
+        let nested = Entry(id: nestedID, name: "Nested", size: 0, modified: Date(), folder: true)
+        try DeviceOps.rename(nested, to: "Nested Renamed", storage: storage, parent: id, on: t)
+
+        // A decomposed (NFD) name must arrive precomposed (NFC).
+        let decomposed = local.appendingPathComponent("cafe\u{301}.txt")
+        try payload.write(to: decomposed)
+        _ = try DeviceOps.upload([decomposed], storage: storage, parent: id, status: status, on: t)
+
+        listing = try t.list(storage: storage, parent: id)
+        try check(listing.unreadable == 0, "The test folder lists \(listing.ids.count) ids but only \(listing.entries.count) are readable")
+        let names = listing.entries.map(\.name)
+        try check(names.contains("renamed.txt"), "File rename failed")
+        try check(names.contains("Nested Renamed") && !names.contains("Nested"), "Folder rename failed")
+        try check(names.contains(where: { sameBytes($0, "caf\u{e9}.txt") }), "The decomposed name was not stored in NFC form")
+
+        // Downloads: byte-for-byte, mode 0644.
+        let dest = local.appendingPathComponent("downloads")
+        try fm.createDirectory(at: dest, withIntermediateDirectories: false)
+        let files = listing.entries.filter { !$0.folder }
+        try DeviceOps.download(files, storage: storage, into: dest, status: status, on: t)
+        for entry in files {
+            let path = dest.appendingPathComponent(entry.name).path
+            try check(fm.contents(atPath: path) == payload, "Round-trip contents differ: \(entry.name)")
+            let mode = (try fm.attributesOfItem(atPath: path)[.posixPermissions] as? NSNumber)?.intValue
+            try check(mode == 0o644, "Downloaded file mode is not 0644: \(entry.name)")
         }
-        let folderID = try Device.create(folderName, storage, parent)
-        let nested = try Device.create("Nested", storage, folderID)
-        try Device.uploadItem(local.appendingPathComponent(names[0]), storage, nested)
-        let created = try Device.entries(storage, parent).filter { fixtures.contains($0.name) }
-        guard created.count == fixtures.count else { throw DriveError(message: "Documents fixtures are missing.") }
-        for entry in created { try Device.deleteItem(entry, storage: storage); print("Verified deleted from documents: \(entry.name)") }
-        for _ in 0..<3 {
-            let remaining = try Device.entries(storage, parent)
-            guard !remaining.contains(where: { fixtures.contains($0.name) }) else { throw DriveError(message: "A deleted documents fixture reappeared.") }
-            Thread.sleep(forTimeInterval: 0.3)
-        }
-        print("PASS: deletion from documents of text, crash-log-style archive, zero-byte archive, and nested folder; confirmed absent across repeated fresh listings.")
+
+        // Nested upload and recursive download.
+        _ = try DeviceOps.upload([source], storage: storage, parent: nestedID, status: status, on: t)
+        try DeviceOps.download([testFolder], storage: storage, into: dest, status: status, on: t)
+        try check(fm.contents(atPath: dest.appendingPathComponent(name).appendingPathComponent("Nested Renamed/sample.txt").path) == payload, "Recursive download failed")
+
+        // Cancel in the middle of an upload: the incomplete copy must be removed.
+        let big = local.appendingPathComponent("cancel-me.bin")
+        try Data(count: 5 * 1024 * 1024).write(to: big)
+        let before = Set(try t.childIDs(storage: storage, parent: id))
+        kd_reset_transfer(); kd_cancel_at(0.2)
+        var cancelNote: String?? = nil
+        do { _ = try DeviceOps.upload([big], storage: storage, parent: id, status: status, on: t) }
+        catch let cancelled as Cancelled { cancelNote = .some(cancelled.note) }
+        kd_reset_transfer()
+        guard let note = cancelNote else { throw DriveError(message: "The upload was not cancelled") }
+        try check(note == nil, "Cancel cleanup reported: \(note ?? "")")
+        try check(Set(try t.childIDs(storage: storage, parent: id)) == before, "A cancelled upload left an object behind")
+
+        // Recursive, verified delete.
+        let outcome = DeviceOps.delete([testFolder], storage: storage, parent: 0, status: status, on: t)
+        removed = outcome.verified.count == 1
+        if let failure = outcome.failure { throw failure }
+        try check(removed && !(try t.childIDs(storage: storage, parent: 0)).contains(id), "Test folder cleanup failed")
+        print("PASS: folder creation, upload, duplicate naming, file rename, folder rename, NFC names, complete listing (ids == readable), byte-for-byte downloads with mode 0644, nested folders, recursive download, cancelled-upload cleanup, and verified recursive deletion.")
     }
 
+    /// Opt-in (`--smoke-test --documents`): deletion inside the real documents folder,
+    /// where some Kindles recreate files. Touches only its own uniquely named fixtures.
+    static func verifyDocumentsDeletion(_ t: Transport, _ storage: UInt32, _ parent: UInt32) throws {
+        let status = TransferStatus()
+        let fm = FileManager.default
+        let token = UUID().uuidString
+        let fileNames = ["KindleDrive-Test-\(token).txt", "KindleDrive-Test-\(token).tgz", "KindleDrive-Test-Zero-\(token).tgz"]
+        let folderName = "KindleDrive-Test-Folder-\(token)"
+        let fixtures = Set(fileNames + [folderName])
+        let local = fm.temporaryDirectory.appendingPathComponent("KindleDrive-Test-\(token)")
+        try fm.createDirectory(at: local, withIntermediateDirectories: false)
+        defer { try? fm.removeItem(at: local) }
+        defer {
+            kd_reset_transfer()
+            if let remaining = try? t.list(storage: storage, parent: parent) {
+                _ = DeviceOps.delete(remaining.entries.filter { fixtures.contains($0.name) }, storage: storage, parent: parent, status: status, on: t)
+            }
+        }
+        kd_reset_transfer()
+        var urls: [URL] = []
+        for (index, name) in fileNames.enumerated() {
+            let url = local.appendingPathComponent(name)
+            try Data(repeating: 42, count: index == 2 ? 0 : 100).write(to: url)
+            urls.append(url)
+        }
+        _ = try DeviceOps.upload(urls, storage: storage, parent: parent, status: status, on: t)
+        let folderID = try DeviceOps.createFolder(folderName, storage: storage, parent: parent, on: t)
+        let nested = try DeviceOps.createFolder("Nested", storage: storage, parent: folderID, on: t)
+        _ = try DeviceOps.upload([urls[0]], storage: storage, parent: nested, status: status, on: t)
+        let created = try t.list(storage: storage, parent: parent).entries.filter { fixtures.contains($0.name) }
+        try check(created.count == fixtures.count, "Documents fixtures are missing.")
+        let outcome = DeviceOps.delete(created, storage: storage, parent: parent, status: status, on: t)
+        if let failure = outcome.failure { throw failure }
+        try check(outcome.verified.count == created.count, "Not every documents fixture was verified as deleted.")
+        for _ in 0..<3 {
+            let remaining = try t.list(storage: storage, parent: parent)
+            try check(!remaining.entries.contains(where: { fixtures.contains($0.name) }), "A deleted documents fixture reappeared.")
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+        print("PASS: deletion from documents of a text file, an archive, a zero-byte archive, and a nested folder; confirmed absent across repeated fresh listings.")
+    }
 }
