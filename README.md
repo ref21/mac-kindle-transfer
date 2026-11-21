@@ -2,13 +2,11 @@
 
 Kindle Drive is a small native macOS app for copying files to and from an Amazon Kindle over USB. It uses SwiftUI and libmtp. It needs no Amazon account, no cloud service and no other app such as Calibre.
 
-macOS has no built-in support for MTP, the protocol newer Kindles use over USB. This app fills that gap.
+macOS has no built-in support for MTP, the protocol newer Kindles use over USB, and Amazon's 'Send to Kindle' and 'USB File Manager' apps are no longer (or at least not currently) supported on Apple silicon Macs. This app fills that gap.
 
 ## Do you need this?
 
 Amazon says the Kindle Scribe and Kindles released in 2024 or later use MTP and need a separate app on a Mac. Earlier Kindles (except the Scribe) generally appear as a normal USB drive in Finder and do not need this app. Exact model lists are not confirmed, so check how your Kindle shows up when you plug it in.
-
-Windows and Linux already show MTP Kindles in their file managers, so there is no plan for a port.
 
 ## Install
 
