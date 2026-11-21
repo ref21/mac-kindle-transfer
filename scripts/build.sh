@@ -32,7 +32,7 @@ fi
 # --- Preflight ---------------------------------------------------------------
 case "$ROOT" in
   *[[:space:]]*)
-    echo "Kindle Drive cannot be built from a folder whose path contains spaces (libmtp's build does not support it). Move the checkout, e.g. to ~/src/Kindle_Driver." >&2
+    echo "Kindle Drive cannot be built from a folder whose path contains spaces (libmtp's build does not support it). Move the checkout, e.g. to ~/src/mac-kindle-transfer." >&2
     exit 1 ;;
 esac
 if ! command -v swift >/dev/null; then

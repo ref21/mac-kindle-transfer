@@ -24,11 +24,11 @@ brew install libusb
 ```
 
 ```
-git clone https://github.com/ref21/Kindle_Driver.git
+git clone https://github.com/ref21/mac-kindle-transfer.git
 ```
 
 ```
-cd Kindle_Driver
+cd mac-kindle-transfer
 ```
 
 ```
