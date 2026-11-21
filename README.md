@@ -10,44 +10,59 @@ Amazon says the Kindle Scribe and Kindles released in 2024 or later use MTP and 
 
 ## Install
 
-Building from source is the recommended route. You need:
+### Download (easiest)
 
-- A Mac with Apple Silicon. Intel and universal builds are not supported yet.
-- macOS: built for macOS 14 or later; tested on macOS 15 and later.
-- Xcode or the Command Line Tools, with Swift 6 or later.
-- [Homebrew](https://brew.sh) and its libusb package.
+You need a Mac with Apple Silicon and macOS 15 or later. To check, open the Apple menu and choose About This Mac. "Chip" should say Apple M1 or later. If it says "Processor" with an Intel name, this app does not run on that Mac.
 
-```
-brew install libusb
-```
+1. Download **Kindle-Drive-1.3.zip** from the [latest release](https://github.com/ref21/mac-kindle-transfer/releases/latest), under Assets.
+2. Open the zip from your Downloads folder. This unpacks **Kindle Drive**.
+3. Drag **Kindle Drive** into your Applications folder.
+4. Open Kindle Drive. The first time, macOS says it can't verify the app and won't open it, because the app is not notarized by Apple. Click **Done** (not Move to Trash).
+5. Open System Settings, then Privacy & Security. Scroll down to the message about Kindle Drive and click **Open Anyway**. Enter your Mac password if asked, then click **Open Anyway** once more.
 
-```
-git clone https://github.com/ref21/mac-kindle-transfer.git
-```
+From then on, Kindle Drive opens normally. Each new version you download needs steps 4 and 5 again.
 
-```
-cd mac-kindle-transfer
-```
-
-```
-./scripts/build.sh
-```
-
-The first build also compiles the bundled libmtp, which takes a few minutes. The app is written to `dist/Kindle Drive.app`. Drag it to `/Applications` or open it from there.
-
-`./scripts/build.sh --install` builds and then copies the app into `/Applications`, replacing any older copy. Quit Kindle Drive first.
-
-The built app's minimum macOS version is also limited by the Homebrew libusb it bundles. Homebrew builds libusb for the Mac it is installed on, so an app built on a newer Mac may require that newer macOS. `build.sh` prints a note when this happens.
-
-### Prebuilt copies and Gatekeeper
-
-An app you build yourself runs without warnings. A downloaded copy of this app is only ad-hoc signed, not notarized, so macOS blocks it. On macOS 15 and later, Control-click then Open no longer works. Allow the app in System Settings, Privacy & Security, using "Open Anyway". Or remove the quarantine flag:
+If you are comfortable with Terminal, this command does the same as steps 4 and 5:
 
 ```
 xattr -dr com.apple.quarantine "/Applications/Kindle Drive.app"
 ```
 
-Newer macOS versions may be stricter still.
+### Build from source
+
+Building the app yourself means macOS trusts it without the steps above. It takes about 10 to 20 minutes the first time, mostly waiting. You type commands into Terminal (in Applications, then Utilities). Paste each command, press Return, and wait for it to finish before the next one.
+
+1. Install Homebrew, a free tool that installs the parts the build needs. Copy the install command from [brew.sh](https://brew.sh) and paste it into Terminal. When it asks for your password, type your Mac password; nothing appears on screen while you type, which is normal. If it offers to install Apple's Command Line Tools, let it.
+2. When Homebrew finishes, it prints **Next steps** with two or three commands. Paste and run them. Without them, the `brew` command is not found.
+3. Install libusb:
+
+   ```
+   brew install libusb
+   ```
+
+4. Download this project:
+
+   ```
+   git clone https://github.com/ref21/mac-kindle-transfer.git
+   ```
+
+5. Go into its folder:
+
+   ```
+   cd mac-kindle-transfer
+   ```
+
+6. Build the app and copy it into Applications:
+
+   ```
+   ./scripts/build.sh --install
+   ```
+
+The first build also compiles the bundled libmtp, which takes a few minutes. When it prints `Installed: /Applications/Kindle Drive.app`, open Kindle Drive from Applications. Quit Kindle Drive before building it again.
+
+To build without installing, run `./scripts/build.sh`. The app is then written to `dist/Kindle Drive.app`.
+
+What the build needs: an Apple Silicon Mac (Intel and universal builds are not supported yet), macOS 14 or later (tested on macOS 15 and later), Xcode or the Command Line Tools with Swift 6 or later, and Homebrew's libusb. The built app's minimum macOS version is also limited by the Homebrew libusb it bundles. Homebrew builds libusb for the Mac it is installed on, so an app built on a newer Mac may require that newer macOS. `build.sh` prints a note when this happens.
 
 ## Using the app
 
@@ -101,7 +116,7 @@ If you quit while a copy, delete or move is running, the app asks whether to sto
 - Apple Silicon only. macOS 14 has only been compile-checked.
 - The app reaches only the storage the Kindle exposes over USB.
 - Deleting is permanent. There is no trash.
-- Moving depends on the Kindle supporting MTP's MoveObject; `--probe` prints whether it does. A Kindle Paperwhite supports it; moving by mouse has not yet been tried on a Kindle. Items cannot be dragged out to Finder; use Save to Mac.
+- Moving depends on the Kindle supporting MTP's MoveObject; `--probe` prints whether it does. A Kindle Paperwhite supports it. Items cannot be dragged out to Finder; use Save to Mac.
 - Moving needs the built app (`dist/Kindle Drive.app`). With `swift run`, dropped Kindle items do nothing.
 - Closing the window during a transfer keeps the app running until it ends; clicking the Dock icon reopens the window.
 
@@ -143,7 +158,7 @@ swift scripts/make-icon.swift
 
 ## Testing status
 
-The app was exercised on one Kindle Paperwhite before release: listing, new folders, upload, duplicate names, rename, download, nested folders and deletion. Later changes to the device layer and the interface (including cancel and disconnect handling) have been checked by automated tests that run against a fake device, and by launching the app in demo mode. On a Kindle Paperwhite, `--probe` passes with the current code, and `--smoke-test` passes every step up to its last one: listing, upload, rename, download, cleanup after a cancelled upload, and verified deletion. Its last step then fails because of the cancel problem described under Known limitations. The interface itself has not yet been run against a real Kindle. Moving items and dropping onto folders were tried by hand in demo mode, and `--smoke-test` moves a file, a folder with contents and a file to the top level and back on a Kindle Paperwhite; moving by mouse in the app has not yet been tried on a Kindle. See Known limitations for what is untested.
+Version 1.3 has been used in the app with one Kindle Paperwhite, including moving items by mouse. Cancel and disconnect handling are also covered by automated tests that run against a fake device. On the Paperwhite, `--probe` passes, and `--smoke-test` passes every step up to its last one: listing, upload, rename, download, moves, cleanup after a cancelled upload, and verified deletion. Its last step then fails because of the cancel problem described under Known limitations. See Known limitations for what is untested.
 
 ## Licence and third-party software
 

@@ -1,6 +1,8 @@
 # Changelog
 
-## 1.3 — unreleased
+## 1.3 — 2026-11-21
+
+First downloadable release: `Kindle-Drive-1.3.zip` on the GitHub release page, for Apple Silicon Macs with macOS 15 or later.
 
 ### Added
 - Move items between folders: drag them onto a folder in the list, a breadcrumb or a sidebar shortcut. Uses the Kindle's MTP move; items whose name is taken in the destination are skipped and listed in Activity. A book's `.sdr` folder (reading position and notes) moves with it, and the Kindle's own top-level folders (documents, fonts, …) cannot be moved. Moves are checked against a fresh listing and can be cancelled between items.
@@ -10,10 +12,10 @@
 ### Fixed
 - Kindle Drive no longer crashes while connecting if the Kindle refuses the first connection; this was seen after a smoke test that had left the Kindle stuck. libmtp then resets the Kindle's USB, the Kindle treats the reset as an eject and drops off USB, and libmtp went on using the lost connection. After about 15 seconds the app now shows "could not be opened" with advice to unplug and replug the Kindle and reopen the app.
 
-### Not validated on hardware
-Dragging and dropping was tried by hand in demo mode, and the smoke test's moves pass on a Kindle Paperwhite. Moving by mouse in the app has not yet been tried on a Kindle. The connect-crash fix was traced through the libusb source and crash report but not yet reproduced on a Kindle.
+### Tested
+Used in the app with a Kindle Paperwhite, including moving items by mouse. The smoke test's moves also pass on the Paperwhite.
 
-## 1.2 — unreleased
+## 1.2 — not released separately (included in 1.3)
 
 ### Fixed
 - The Kindle no longer drops off USB when Kindle Drive disconnects or quits. libmtp sent the Kindle a USB reset on every disconnect, which the Kindle treated as an eject.

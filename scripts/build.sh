@@ -5,8 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
-APP_VERSION="1.2"
-APP_BUILD="3"
+APP_VERSION="1.3"
+APP_BUILD="4"
 BUNDLE_ID="io.github.ref21.KindleDrive"
 MIN_MACOS="14.0"
 
